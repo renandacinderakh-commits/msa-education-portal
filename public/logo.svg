@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60" fill="none">
+  <!-- Book / Growth Symbol -->
+  <g transform="translate(4, 6)">
+    <!-- Open Book Base -->
+    <path d="M8 42 C8 42 22 38 24 24 C24 24 26 38 40 42" stroke="#0ea5e9" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+    <!-- Left Page -->
+    <path d="M10 40 C12 34 18 28 24 26" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.7"/>
+    <!-- Right Page -->
+    <path d="M38 40 C36 34 30 28 24 26" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.7"/>
+    <!-- Growing Sprout from Book -->
+    <path d="M24 24 L24 12" stroke="#14b8a6" stroke-width="2" stroke-linecap="round"/>
+    <!-- Left Leaf -->
+    <path d="M24 18 C20 16 18 12 20 8 C22 10 22 14 24 18" fill="#14b8a6" opacity="0.8"/>
+    <!-- Right Leaf -->
+    <path d="M24 14 C28 12 30 8 28 4 C26 6 26 10 24 14" fill="#0ea5e9" opacity="0.8"/>
+    <!-- Star Sparkle -->
+    <circle cx="28" cy="5" r="1.5" fill="#facc15"/>
+    <circle cx="18" cy="8" r="1" fill="#fb923c" opacity="0.7"/>
+  </g>
+  <!-- MSA Text -->
+  <text x="56" y="32" font-family="'Inter', 'Helvetica Neue', sans-serif" font-weight="700" font-size="26" fill="#0c4a6e" letter-spacing="-0.5">MSA</text>
+  <!-- Education Text -->
+  <text x="56" y="50" font-family="'Inter', 'Helvetica Neue', sans-serif" font-weight="400" font-size="13" fill="#14b8a6" letter-spacing="3.5">EDUCATION</text>
+</svg>

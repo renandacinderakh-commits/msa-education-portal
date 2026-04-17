@@ -1,0 +1,11 @@
+# MSA Education - Robots.txt
+User-agent: *
+Allow: /
+
+# Block sensitive paths
+Disallow: /api/
+Disallow: /_next/
+Disallow: /.vercel/
+
+# Sitemap
+Sitemap: https://msa-education.vercel.app/sitemap.xml

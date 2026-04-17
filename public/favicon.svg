@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- Book Base -->
+  <path d="M8 38 C8 38 22 34 24 20 C24 20 26 34 40 38" stroke="#0ea5e9" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <path d="M10 36 C12 30 18 24 24 22" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <path d="M38 36 C36 30 30 24 24 22" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <!-- Sprout -->
+  <path d="M24 20 L24 8" stroke="#14b8a6" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Left Leaf -->
+  <path d="M24 14 C20 12 18 8 20 4 C22 6 22 10 24 14" fill="#14b8a6" opacity="0.85"/>
+  <!-- Right Leaf -->
+  <path d="M24 10 C28 8 30 4 28 0 C26 2 26 6 24 10" fill="#0ea5e9" opacity="0.85"/>
+  <!-- Star -->
+  <circle cx="30" cy="3" r="2" fill="#facc15"/>
+  <circle cx="18" cy="5" r="1.2" fill="#fb923c" opacity="0.7"/>
+</svg>
