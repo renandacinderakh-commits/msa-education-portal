@@ -1,358 +1,503 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import type { Student, DailyEntry, MonthlyReport } from "@/lib/supabase/types";
+import type { Student, DailyEntry } from "@/lib/supabase/types";
 import { SCORE_CATEGORIES } from "@/lib/supabase/types";
 import {
   FileText,
-  ChevronDown,
   Plus,
-  Calendar,
-  Star,
-  TrendingUp,
-  Download,
+  X,
+  Send,
   Eye,
-  Check,
   Loader2,
-  Wand2,
+  CheckCircle,
+  AlertCircle,
+  Languages,
+  BookOpen,
+  TrendingUp,
+  Star,
+  Globe,
 } from "lucide-react";
-import dynamic from "next/dynamic";
 
-// Lazily load PDF download button (client-only)
-const PDFDownloadButton = dynamic(() => import("@/components/portal/PDFDownloadButton"), { ssr: false });
+async function translateID2EN(text: string): Promise<string> {
+  if (!text.trim()) return "";
+  try {
+    const res = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=id|en`
+    );
+    const data = await res.json();
+    return data.responseData?.translatedText || text;
+  } catch {
+    return text;
+  }
+}
+
+const MONTHS_ID = [
+  "Januari","Februari","Maret","April","Mei","Juni",
+  "Juli","Agustus","September","Oktober","November","Desember",
+];
+
+interface ReportForm {
+  student_id: string;
+  month: number;
+  year: number;
+  period_label: string;
+  summary: string;
+  summary_en: string;
+  highlights: string;
+  highlights_en: string;
+  achievements: string;
+  achievements_en: string;
+  areas_to_improve: string;
+  areas_to_improve_en: string;
+  goals_next_month: string;
+  goals_next_month_en: string;
+  recommendations: string;
+  recommendations_en: string;
+  is_published: boolean;
+}
+
+const now = new Date();
+const EMPTY_REPORT: ReportForm = {
+  student_id: "",
+  month: now.getMonth() + 1,
+  year: now.getFullYear(),
+  period_label: `${MONTHS_ID[now.getMonth()]} ${now.getFullYear()}`,
+  summary: "",
+  summary_en: "",
+  highlights: "",
+  highlights_en: "",
+  achievements: "",
+  achievements_en: "",
+  areas_to_improve: "",
+  areas_to_improve_en: "",
+  goals_next_month: "",
+  goals_next_month_en: "",
+  recommendations: "",
+  recommendations_en: "",
+  is_published: false,
+};
 
 export default function TeacherReportsPage() {
   const [students, setStudents] = useState<Student[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [reports, setReports] = useState<any[]>([]);
   const [entries, setEntries] = useState<DailyEntry[]>([]);
-  const [existingReport, setExistingReport] = useState<MonthlyReport | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [savedReport, setSavedReport] = useState<MonthlyReport | null>(null);
-  const [allReports, setAllReports] = useState<MonthlyReport[]>([]);
-  const [summaryId, setSummaryId] = useState("");
-  const [summaryEn, setSummaryEn] = useState("");
-  const [achievementsId, setAchievementsId] = useState("");
-  const [achievementsEn, setAchievementsEn] = useState("");
-  const [recommendationsId, setRecommendationsId] = useState("");
-  const [recommendationsEn, setRecommendationsEn] = useState("");
-  const [goalsId, setGoalsId] = useState("");
-  const [goalsEn, setGoalsEn] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [teacherId, setTeacherId] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<ReportForm>(EMPTY_REPORT);
+  const [formState, setFormState] = useState<"idle"|"submitting"|"success"|"error">("idle");
+  const [formError, setFormError] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
+  const [filterStudent, setFilterStudent] = useState("all");
 
-  const supabase = createClient();
-
-  const MONTHS = [
-    "Januari","Februari","Maret","April","Mei","Juni",
-    "Juli","Agustus","September","Oktober","November","Desember"
-  ];
-  const YEARS = [2025, 2026, 2027];
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
+    let mounted = true;
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: studs } = await supabase
-        .from("students").select("*").eq("teacher_id", user.id).eq("is_active", true).order("full_name");
-      if (studs) { setStudents(studs as Student[]); if (studs.length > 0) setSelectedStudent(studs[0].id); }
-      const { data: reps } = await supabase
-        .from("monthly_reports").select("*, student:students(full_name,nickname,grade_level)")
-        .eq("teacher_id", user.id).order("year", { ascending: false }).order("month", { ascending: false });
-      if (reps) setAllReports(reps as unknown as MonthlyReport[]);
-      setLoading(false);
+      if (!user || !mounted) { setPageLoading(false); return; }
+      setTeacherId(user.id);
+
+      const [{ data: studs }, { data: ents }] = await Promise.all([
+        supabase.from("students").select("*").eq("teacher_id", user.id).eq("is_active", true).order("full_name"),
+        supabase.from("daily_entries").select("*").eq("teacher_id", user.id).order("entry_date", { ascending: false }),
+      ]);
+
+      if (mounted) {
+        setStudents(studs as Student[] || []);
+        setEntries(ents as DailyEntry[] || []);
+        if (studs && studs.length > 0) {
+          setForm(f => ({ ...f, student_id: studs[0].id }));
+        }
+        setPageLoading(false);
+      }
     };
     load();
+    return () => { mounted = false; };
   }, [supabase]);
 
-  // Load entries when student/month/year changes
+  const loadReports = useCallback(async () => {
+    if (!teacherId) return;
+    let q = supabase
+      .from("monthly_reports")
+      .select("*, students(full_name, grade_level)")
+      .eq("teacher_id", teacherId)
+      .order("year", { ascending: false })
+      .order("month", { ascending: false });
+
+    if (filterStudent !== "all") q = q.eq("student_id", filterStudent);
+    const { data } = await q;
+    setReports(data || []);
+  }, [supabase, teacherId, filterStudent]);
+
   useEffect(() => {
-    if (!selectedStudent) return;
-    const load = async () => {
-      const startOfMonth = `${selectedYear}-${String(selectedMonth).padStart(2,"0")}-01`;
-      const endOfMonth = `${selectedYear}-${String(selectedMonth).padStart(2,"0")}-31`;
-      const { data } = await supabase
-        .from("daily_entries").select("*")
-        .eq("student_id", selectedStudent)
-        .gte("entry_date", startOfMonth).lte("entry_date", endOfMonth)
-        .order("entry_date");
-      if (data) setEntries(data as DailyEntry[]);
+    if (teacherId) loadReports();
+  }, [teacherId, filterStudent, loadReports]);
 
-      const { data: rep } = await supabase
-        .from("monthly_reports").select("*")
-        .eq("student_id", selectedStudent).eq("month", selectedMonth).eq("year", selectedYear).maybeSingle();
-      if (rep) { setExistingReport(rep as MonthlyReport); setSavedReport(rep as MonthlyReport); }
-      else { setExistingReport(null); setSavedReport(null); }
-    };
-    load();
-  }, [selectedStudent, selectedMonth, selectedYear, supabase]);
+  // Auto-calculate consolidated scores from entries
+  const getConsolidatedScores = useCallback(() => {
+    const monthEntries = entries.filter(e => {
+      const d = new Date(e.entry_date);
+      return e.student_id === form.student_id &&
+        d.getMonth() + 1 === form.month &&
+        d.getFullYear() === form.year;
+    });
 
-  // Calculate consolidated scores
-  const consolidatedScores = SCORE_CATEGORIES.reduce((acc, cat) => {
-    const vals = entries.map(e => (e.scores as any)?.[cat.key]).filter(Boolean) as number[];
-    if (vals.length > 0) acc[cat.key] = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
-    return acc;
-  }, {} as Record<string, number>);
+    if (!monthEntries.length) return {};
+    const totals: Record<string, { sum: number; count: number }> = {};
+    monthEntries.forEach(e => {
+      Object.entries(e.scores || {}).forEach(([key, val]) => {
+        if (!totals[key]) totals[key] = { sum: 0, count: 0 };
+        totals[key].sum += (val as number) || 0;
+        totals[key].count += 1;
+      });
+    });
+    const avg: Record<string, number> = {};
+    Object.entries(totals).forEach(([k, v]) => {
+      avg[k] = Math.round((v.sum / v.count) * 10) / 10;
+    });
+    return avg;
+  }, [entries, form.student_id, form.month, form.year]);
 
-  const avgOverallStars = entries.length > 0
-    ? Math.round(entries.reduce((a, e) => a + e.overall_stars, 0) / entries.length * 10) / 10
-    : 0;
+  const monthEntries = useMemo(() => entries.filter(e => {
+    const d = new Date(e.entry_date);
+    return e.student_id === form.student_id &&
+      d.getMonth() + 1 === form.month &&
+      d.getFullYear() === form.year;
+  }), [entries, form.student_id, form.month, form.year]);
 
-  const handleTranslate = async (sourceText: string, setTarget: (val: string) => void) => {
-    if (!sourceText.trim()) return;
+  const updateForm = <K extends keyof ReportForm>(key: K, value: ReportForm[K]) =>
+    setForm(f => ({ ...f, [key]: value }));
+
+  const handleMonthYearChange = (month: number, year: number) => {
+    setForm(f => ({
+      ...f, month, year,
+      period_label: `${MONTHS_ID[month - 1]} ${year}`,
+    }));
+  };
+
+  const handleAutoTranslate = async () => {
+    setTranslating(true);
+    const [summary_en, highlights_en, achievements_en, areas_to_improve_en, goals_next_month_en, recommendations_en] =
+      await Promise.all([
+        form.summary ? translateID2EN(form.summary) : Promise.resolve(""),
+        form.highlights ? translateID2EN(form.highlights) : Promise.resolve(""),
+        form.achievements ? translateID2EN(form.achievements) : Promise.resolve(""),
+        form.areas_to_improve ? translateID2EN(form.areas_to_improve) : Promise.resolve(""),
+        form.goals_next_month ? translateID2EN(form.goals_next_month) : Promise.resolve(""),
+        form.recommendations ? translateID2EN(form.recommendations) : Promise.resolve(""),
+      ]);
+    setForm(f => ({ ...f, summary_en, highlights_en, achievements_en, areas_to_improve_en, goals_next_month_en, recommendations_en }));
+    setTranslating(false);
+  };
+
+  const handleSubmit = async (publish: boolean) => {
+    setFormError("");
+    if (!form.student_id) { setFormError("Pilih murid terlebih dahulu"); return; }
+    if (!form.summary.trim()) { setFormError("Ringkasan wajib diisi"); return; }
+
+    setFormState("submitting");
     try {
-      setTarget("Translating...");
-      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(sourceText)}&langpair=id|en`);
-      const data = await res.json();
-      if (data?.responseData?.translatedText) {
-        setTarget(data.responseData.translatedText);
-      } else {
-        setTarget("Translation error or limit reached.");
-      }
-    } catch (error) {
-      setTarget("Network error during translation.");
+      const consolidated_scores = getConsolidatedScores();
+      const { error } = await supabase.from("monthly_reports").insert({
+        student_id: form.student_id,
+        teacher_id: teacherId,
+        month: form.month,
+        year: form.year,
+        period_label: form.period_label,
+        consolidated_scores,
+        summary: form.summary,
+        summary_en: form.summary_en,
+        highlights: form.highlights,
+        highlights_en: form.highlights_en,
+        achievements: form.achievements,
+        achievements_en: form.achievements_en,
+        areas_to_improve: form.areas_to_improve,
+        areas_to_improve_en: form.areas_to_improve_en,
+        goals_next_month: form.goals_next_month,
+        goals_next_month_en: form.goals_next_month_en,
+        recommendations: form.recommendations,
+        recommendations_en: form.recommendations_en,
+        total_meetings: monthEntries.length,
+        attendance_rate: 100,
+        is_published: publish,
+      });
+
+      if (error) throw error;
+      setFormState("success");
+      setTimeout(() => {
+        setFormState("idle");
+        setShowForm(false);
+        setForm({ ...EMPTY_REPORT, student_id: form.student_id });
+        loadReports();
+      }, 1500);
+    } catch (err: any) {
+      setFormError(err.message || "Terjadi kesalahan");
+      setFormState("error");
+      setTimeout(() => setFormState("idle"), 3000);
     }
   };
 
-  const handleGenerate = async () => {
-    if (!selectedStudent || entries.length === 0) return;
-    setGenerating(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const student = students.find(s => s.id === selectedStudent);
-    const periodLabel = `${MONTHS[selectedMonth - 1]} ${selectedYear}`;
-
-    const payload = {
-      student_id: selectedStudent,
-      teacher_id: user.id,
-      month: selectedMonth,
-      year: selectedYear,
-      period_label: periodLabel,
-      consolidated_scores: consolidatedScores,
-      total_meetings: entries.length,
-      attendance_rate: 100,
-      summary: summaryId,
-      summary_en: summaryEn,
-      achievements: achievementsId,
-      achievements_en: achievementsEn,
-      recommendations: recommendationsId,
-      recommendations_en: recommendationsEn,
-      goals_next_month: goalsId,
-      goals_next_month_en: goalsEn,
-      is_published: false,
-    };
-
-    const { data, error } = existingReport
-      ? await supabase.from("monthly_reports").update(payload).eq("id", existingReport.id).select().single()
-      : await supabase.from("monthly_reports").insert(payload).select().single();
-
-    if (!error && data) { setSavedReport(data as MonthlyReport); setExistingReport(data as MonthlyReport); }
-    setGenerating(false);
+  const handlePublish = async (reportId: string, currentlyPublished: boolean) => {
+    await supabase.from("monthly_reports").update({ is_published: !currentlyPublished }).eq("id", reportId);
+    loadReports();
   };
 
-  const handlePublish = async () => {
-    if (!savedReport) return;
-    setPublishing(true);
-    await supabase.from("monthly_reports").update({ is_published: !savedReport.is_published }).eq("id", savedReport.id);
-    setSavedReport(prev => prev ? { ...prev, is_published: !prev.is_published } : prev);
-    setPublishing(false);
-  };
+  if (pageLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="w-8 h-8 border-[3px] border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
 
-  if (loading) return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="w-8 h-8 border-3 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
-    </div>
-  );
-
-  const student = students.find(s => s.id === selectedStudent);
+  const textAreaClass = "w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none resize-none";
+  const enAreaClass = "w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 rounded-lg text-xs text-slate-600 dark:text-slate-400 focus:ring-2 focus:ring-indigo-300 outline-none resize-none mt-1";
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">📊 Laporan Bulanan</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400">Generate dan publish laporan perkembangan murid</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-white">
+            Laporan Bulanan 📊
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            Buat dan kelola laporan perkembangan belajar
+          </p>
+        </div>
+        <button
+          onClick={() => { setShowForm(true); setFormError(""); }}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-sky-500 to-teal-500 text-white text-sm font-semibold rounded-xl hover:from-sky-600 hover:to-teal-600 transition-all active:scale-95 shadow-md shadow-sky-200"
+        >
+          <Plus className="w-4 h-4" />
+          Buat Laporan
+        </button>
       </div>
 
-      {/* Selector Panel */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-        className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
-        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-sky-500" />
-          Pilih Periode
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Murid</label>
-            <div className="relative">
-              <select value={selectedStudent} onChange={e => setSelectedStudent(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white appearance-none outline-none focus:ring-2 focus:ring-sky-400">
-                {students.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Bulan</label>
-            <div className="relative">
-              <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white appearance-none outline-none focus:ring-2 focus:ring-sky-400">
-                {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Tahun</label>
-            <div className="relative">
-              <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white appearance-none outline-none focus:ring-2 focus:ring-sky-400">
-                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
-        </div>
-
-        {/* Period Summary */}
-        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-4">
-          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-            <FileText className="w-4 h-4 text-sky-500" />
-            <span><strong className="text-slate-800 dark:text-white">{entries.length}</strong> pertemuan tercatat</span>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-            <Star className="w-4 h-4 text-amber-500" />
-            <span>Rata-rata <strong className="text-slate-800 dark:text-white">{avgOverallStars || "—"}</strong> bintang</span>
-          </div>
-          {existingReport && (
-            <div className={`flex items-center gap-1.5 text-sm font-medium ${existingReport.is_published ? "text-emerald-600" : "text-amber-600"}`}>
-              {existingReport.is_published ? <Check className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              {existingReport.is_published ? "Sudah dipublish" : "Draft"}
-            </div>
-          )}
-        </div>
-      </motion.div>
-
-      {entries.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center">
-          <Calendar className="w-16 h-16 text-slate-200 dark:text-slate-700 mx-auto mb-4" />
-          <h3 className="font-semibold text-slate-800 dark:text-white mb-2">Tidak Ada Entri</h3>
-          <p className="text-sm text-slate-400">Belum ada entri harian untuk periode ini.</p>
-        </div>
-      ) : (
-        <>
-          {/* Consolidated Scores */}
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
-            <h2 className="font-semibold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-emerald-500" />
-              Rata-rata Penilaian (Auto-Generated)
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {SCORE_CATEGORIES.map(cat => {
-                const val = consolidatedScores[cat.key] || 0;
-                return (
-                  <div key={cat.key} className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-center">
-                    <p className="text-2xl mb-1">{cat.icon}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1 leading-tight">{cat.label_id}</p>
-                    <div className="flex justify-center gap-0.5">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star key={i} className={`w-3 h-3 ${i < Math.round(val) ? "fill-amber-400 text-amber-400" : "text-slate-200 dark:text-slate-700"}`} />
-                      ))}
+      {/* Form Modal */}
+      <AnimatePresence>
+        {showForm && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowForm(false)}
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }}
+              className="fixed inset-0 z-50 overflow-y-auto"
+            >
+              <div className="min-h-full flex items-start justify-center p-4 pt-8">
+                <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800">
+                  {/* Header */}
+                  <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-800">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-800 dark:text-white">
+                        📊 Buat Laporan Bulanan Baru
+                      </h2>
+                      <p className="text-sm text-slate-400 mt-0.5">
+                        Laporan ini akan bisa diakses dan diunduh oleh orang tua
+                      </p>
                     </div>
-                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-0.5">{val > 0 ? val.toFixed(1) : "—"}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </motion.div>
-
-          {/* Report Text Fields */}
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-5">
-            <h2 className="font-semibold text-slate-800 dark:text-white">📝 Narasi Laporan (Bilingual)</h2>
-
-            {[
-              { label: "Ringkasan Bulan Ini", labelEn: "Monthly Summary", valId: summaryId, setId: setSummaryId, valEn: summaryEn, setEn: setSummaryEn },
-              { label: "Pencapaian", labelEn: "Achievements", valId: achievementsId, setId: setAchievementsId, valEn: achievementsEn, setEn: setAchievementsEn },
-              { label: "Rekomendasi untuk Orang Tua", labelEn: "Recommendations for Parents", valId: recommendationsId, setId: setRecommendationsId, valEn: recommendationsEn, setEn: setRecommendationsEn },
-              { label: "Target Bulan Depan", labelEn: "Goals Next Month", valId: goalsId, setId: setGoalsId, valEn: goalsEn, setEn: setGoalsEn },
-            ].map(field => (
-              <div key={field.label} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">🇮🇩 {field.label}</label>
-                  <textarea value={field.valId} onChange={e => field.setId(e.target.value)} rows={3}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-sky-400 outline-none resize-none" />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">🇬🇧 {field.labelEn}</label>
-                    <button
-                      type="button"
-                      onClick={() => handleTranslate(field.valId, field.setEn)}
-                      className="flex items-center gap-1 text-[10px] font-bold text-sky-500 hover:text-sky-600 transition-colors"
-                    >
-                      <Wand2 className="w-3 h-3" /> Auto-Translate
+                    <button onClick={() => setShowForm(false)} className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
+                      <X className="w-5 h-5" />
                     </button>
                   </div>
-                  <textarea value={field.valEn} onChange={e => field.setEn(e.target.value)} rows={3}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-sky-400 outline-none resize-none" />
+
+                  <div className="p-6 space-y-5">
+                    {/* Student + Period */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="sm:col-span-1">
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Murid *</label>
+                        <select value={form.student_id} onChange={e => updateForm("student_id", e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none">
+                          {students.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Bulan *</label>
+                        <select value={form.month} onChange={e => handleMonthYearChange(parseInt(e.target.value), form.year)}
+                          className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none">
+                          {MONTHS_ID.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Tahun *</label>
+                        <input type="number" value={form.year} onChange={e => handleMonthYearChange(form.month, parseInt(e.target.value))}
+                          className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none" />
+                      </div>
+                    </div>
+
+                    {/* Session stats */}
+                    {monthEntries.length > 0 && (
+                      <div className="p-4 bg-sky-50 dark:bg-sky-900/20 rounded-2xl border border-sky-100 dark:border-sky-800">
+                        <p className="text-sm font-semibold text-sky-700 dark:text-sky-300 mb-1">
+                          📈 Data Sesi Bulan Ini Terdeteksi
+                        </p>
+                        <p className="text-xs text-sky-600 dark:text-sky-400">
+                          {monthEntries.length} sesi belajar · Nilai rata-rata akan dihitung otomatis
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Narrative fields */}
+                    {[
+                      { key: "summary", label: "📋 Ringkasan Perkembangan Belajar *", placeholder: "Deskripsikan secara umum perkembangan belajar murid selama bulan ini...", rows: 4 },
+                      { key: "achievements", label: "🏆 Pencapaian & Prestasi", placeholder: "Pencapaian luar biasa, progress yang signifikan, hal yang membanggakan...", rows: 3 },
+                      { key: "areas_to_improve", label: "💪 Area yang Perlu Dikembangkan", placeholder: "Topik atau skill yang masih perlu latihan lebih lanjut...", rows: 3 },
+                      { key: "goals_next_month", label: "🎯 Target Bulan Berikutnya", placeholder: "Target dan tujuan belajar untuk bulan depan...", rows: 3 },
+                      { key: "recommendations", label: "💡 Rekomendasi untuk Orang Tua", placeholder: "Aktivitas di rumah, hal yang perlu diperhatikan, cara mendukung belajar anak...", rows: 3 },
+                    ].map(({ key, label, placeholder, rows }) => (
+                      <div key={key}>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                          {label}
+                        </label>
+                        <textarea rows={rows} placeholder={placeholder}
+                          value={(form as any)[key]}
+                          onChange={e => updateForm(key as keyof ReportForm, e.target.value)}
+                          className={textAreaClass}
+                        />
+                        {(form as any)[key + "_en"] !== undefined && (form as any)[key + "_en"] && (
+                          <textarea rows={2}
+                            value={(form as any)[key + "_en"]}
+                            onChange={e => updateForm((key + "_en") as keyof ReportForm, e.target.value)}
+                            placeholder="🇬🇧 English translation..."
+                            className={enAreaClass}
+                          />
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Auto translate */}
+                    <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
+                          <Globe className="w-4 h-4" /> Terjemahan Bahasa Inggris
+                        </p>
+                        <button type="button" onClick={handleAutoTranslate} disabled={translating}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-60">
+                          {translating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
+                          {translating ? "Menerjemahkan..." : "Terjemah Semua"}
+                        </button>
+                      </div>
+                      <p className="text-xs text-indigo-500 mt-1">
+                        Untuk orang tua yang prefer membaca dalam Bahasa Inggris
+                      </p>
+                    </div>
+
+                    {/* Error */}
+                    {formError && (
+                      <div className="flex items-center gap-2 p-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-xl text-rose-600 dark:text-rose-400 text-sm">
+                        <AlertCircle className="w-4 h-4 shrink-0" /> {formError}
+                      </div>
+                    )}
+
+                    {/* Buttons */}
+                    <div className="flex gap-3 pt-2">
+                      <button type="button" onClick={() => setShowForm(false)}
+                        className="flex-1 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        Batal
+                      </button>
+                      <button type="button" onClick={() => handleSubmit(false)}
+                        disabled={formState === "submitting" || formState === "success"}
+                        className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors disabled:opacity-50">
+                        <Eye className="w-4 h-4" /> Simpan Draft
+                      </button>
+                      <button type="button" onClick={() => handleSubmit(true)}
+                        disabled={formState === "submitting" || formState === "success"}
+                        className={`flex-[2] inline-flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95 ${
+                          formState === "success" ? "bg-emerald-500 text-white"
+                          : formState === "submitting" ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                          : "bg-gradient-to-r from-sky-500 to-teal-500 text-white hover:from-sky-600 hover:to-teal-600"
+                        }`}>
+                        {formState === "submitting" && <Loader2 className="w-4 h-4 animate-spin" />}
+                        {formState === "success" && <CheckCircle className="w-4 h-4" />}
+                        {(formState === "idle" || formState === "error") && <Send className="w-4 h-4" />}
+                        {formState === "submitting" ? "Menyimpan..." : formState === "success" ? "Berhasil! ✓" : "Simpan & Publish"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-            ))}
-          </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
-          {/* Action Buttons */}
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-            className="flex flex-wrap items-center gap-3 pb-8">
-            <button onClick={handleGenerate} disabled={generating}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sky-500 to-teal-500 hover:from-sky-600 hover:to-teal-600 text-white font-semibold rounded-xl shadow-lg transition-all disabled:opacity-50">
-              {generating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-              {existingReport ? "Update Laporan" : "Generate Laporan"}
-            </button>
+      {/* Filter */}
+      <div className="flex gap-3 items-center">
+        <select value={filterStudent} onChange={e => setFilterStudent(e.target.value)}
+          className="px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-medium text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none">
+          <option value="all">Semua Murid</option>
+          {students.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+        </select>
+        <p className="text-sm text-slate-500">{reports.length} laporan</p>
+      </div>
 
-            {savedReport && (
-              <>
-                <button onClick={handlePublish} disabled={publishing}
-                  className={`inline-flex items-center gap-2 px-6 py-3 font-semibold rounded-xl shadow-lg transition-all disabled:opacity-50 ${
-                    savedReport.is_published
-                      ? "bg-amber-50 dark:bg-amber-900/20 text-amber-600 border-2 border-amber-200"
-                      : "bg-emerald-500 hover:bg-emerald-600 text-white"
-                  }`}>
-                  {publishing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Eye className="w-5 h-5" />}
-                  {savedReport.is_published ? "Sembunyikan dari Orang Tua" : "Publish ke Orang Tua"}
-                </button>
-
-                <PDFDownloadButton report={savedReport} student={student!} entries={entries} />
-              </>
-            )}
-          </motion.div>
-        </>
-      )}
-
-      {/* All Reports History */}
-      {allReports.length > 0 && (
-        <div className="space-y-3 pb-8">
-          <h2 className="font-semibold text-slate-800 dark:text-white">📚 Riwayat Laporan</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {allReports.map(rep => (
-              <div key={rep.id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-semibold text-slate-800 dark:text-white">{rep.period_label}</p>
-                  <span className={`text-xs px-2 py-1 rounded-full ${rep.is_published ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30" : "bg-amber-100 text-amber-600 dark:bg-amber-900/30"}`}>
-                    {rep.is_published ? "Published" : "Draft"}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400">{(rep.student as any)?.full_name} • {rep.total_meetings} pertemuan</p>
-              </div>
-            ))}
+      {/* Reports list */}
+      <div className="space-y-3">
+        {reports.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 text-center">
+            <FileText className="w-12 h-12 mx-auto text-slate-200 dark:text-slate-700 mb-3" />
+            <p className="text-slate-500">Belum ada laporan. Klik "Buat Laporan" untuk mulai.</p>
           </div>
-        </div>
-      )}
+        ) : (
+          reports.map((report, i) => {
+            const allScores = Object.values(report.consolidated_scores || {});
+            const avg = allScores.length
+              ? allScores.reduce((a: number, b: unknown) => a + ((b as number) || 0), 0) / allScores.length
+              : 0;
+
+            return (
+              <motion.div key={report.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
+                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800 dark:text-white">{report.period_label}</h3>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        report.is_published
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                      }`}>
+                        {report.is_published ? "✓ Published" : "Draft"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {report.students?.full_name} · {report.total_meetings} pertemuan
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-0.5">
+                      {Array.from({ length: 5 }).map((_, si) => (
+                        <Star key={si} className={`w-3.5 h-3.5 ${si < Math.round(avg) ? "fill-amber-400 text-amber-400" : "text-slate-200 dark:text-slate-700"}`} />
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => handlePublish(report.id, report.is_published)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        report.is_published
+                          ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400"
+                          : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400"
+                      }`}
+                    >
+                      {report.is_published ? "Unpublish" : "Publish"}
+                    </button>
+                  </div>
+                </div>
+                {report.summary && (
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mt-3 line-clamp-2">{report.summary}</p>
+                )}
+              </motion.div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
