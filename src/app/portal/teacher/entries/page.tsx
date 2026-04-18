@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import type { Student } from "@/lib/supabase/types";
 import { SCORE_CATEGORIES } from "@/lib/supabase/types";
+import PhotoUploader from "@/components/portal/PhotoUploader";
 import {
   Plus,
   Send,
@@ -112,6 +113,7 @@ export default function TeacherEntriesPage() {
   const [formState, setFormState] = useState<FormState>("idle");
   const [formError, setFormError] = useState("");
   const [translating, setTranslating] = useState(false);
+  const [photos, setPhotos] = useState<string[]>([]);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [filterStudent, setFilterStudent] = useState("all");
@@ -236,7 +238,7 @@ export default function TeacherEntriesPage() {
         mood: form.mood,
         overall_stars: form.overall_stars,
         scores: form.scores,
-        photo_urls: [],
+        photo_urls: photos,
       });
 
       if (error) throw error;
@@ -246,6 +248,7 @@ export default function TeacherEntriesPage() {
         setFormState("idle");
         setShowForm(false);
         setForm({ ...EMPTY_FORM, student_id: form.student_id });
+        setPhotos([]);
         loadEntries();
       }, 1500);
     } catch (err: any) {
@@ -269,6 +272,12 @@ export default function TeacherEntriesPage() {
     }));
   }, []);
 
+  const closeForm = useCallback(() => {
+    setShowForm(false);
+    setFormError("");
+    setPhotos([]);
+  }, []);
+
   if (pageLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -290,7 +299,7 @@ export default function TeacherEntriesPage() {
           </p>
         </div>
         <button
-          onClick={() => { setShowForm(true); setFormError(""); }}
+          onClick={() => { setShowForm(true); setFormError(""); setPhotos([]); }}
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-sky-500 to-teal-500 text-white text-sm font-semibold rounded-xl hover:from-sky-600 hover:to-teal-600 transition-all active:scale-95 shadow-md shadow-sky-200"
         >
           <Plus className="w-4 h-4" />
@@ -321,7 +330,7 @@ export default function TeacherEntriesPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowForm(false)}
+              onClick={closeForm}
               className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
             />
             <motion.div
@@ -344,7 +353,7 @@ export default function TeacherEntriesPage() {
                       </p>
                     </div>
                     <button
-                      onClick={() => setShowForm(false)}
+                      onClick={closeForm}
                       className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
                     >
                       <X className="w-5 h-5" />
@@ -488,6 +497,26 @@ export default function TeacherEntriesPage() {
                         value={form.activities_description}
                         onChange={(e) => updateForm("activities_description", e.target.value)}
                         className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none resize-none"
+                      />
+                    </div>
+
+                    <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-4 dark:border-sky-800 dark:bg-sky-900/20">
+                      <div className="mb-3 flex items-start gap-2">
+                        <Camera className="mt-0.5 h-4 w-4 text-sky-500" />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                            Foto Activity / Evidence
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Upload foto kegiatan belajar. Foto otomatis tampil di jurnal parent dan ikut masuk PDF bulanan.
+                          </p>
+                        </div>
+                      </div>
+                      <PhotoUploader
+                        photos={photos}
+                        onChange={setPhotos}
+                        maxPhotos={6}
+                        studentId={form.student_id || "entry"}
                       />
                     </div>
 
@@ -640,7 +669,7 @@ export default function TeacherEntriesPage() {
                     <div className="flex gap-3 pt-2">
                       <button
                         type="button"
-                        onClick={() => setShowForm(false)}
+                        onClick={closeForm}
                         className="flex-1 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                       >
                         Batal
@@ -770,6 +799,23 @@ export default function TeacherEntriesPage() {
                       transition={{ duration: 0.2 }}
                       className="border-t border-slate-100 dark:border-slate-800 p-4 sm:p-5 space-y-3"
                     >
+                      {entry.photo_urls?.length > 0 && (
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                          {entry.photo_urls.slice(0, 6).map((url: string, photoIndex: number) => (
+                            <div
+                              key={`${url}-${photoIndex}`}
+                              className="relative aspect-square overflow-hidden rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-700"
+                            >
+                              <img
+                                src={url}
+                                alt={`Foto activity ${photoIndex + 1}`}
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {entry.topics_taught && (
                         <div className="p-3 bg-sky-50 dark:bg-sky-900/20 rounded-xl">
                           <p className="text-xs font-semibold text-sky-600 mb-1">📚 Materi</p>
