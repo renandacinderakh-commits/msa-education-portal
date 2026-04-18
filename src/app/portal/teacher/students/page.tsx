@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import type { Student } from "@/lib/supabase/types";
-import { Users, Plus, ChevronRight, BookOpen } from "lucide-react";
+import { Users, BookOpen } from "lucide-react";
 
 export default function TeacherStudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -66,10 +65,7 @@ export default function TeacherStudentsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.08 }}
             >
-              <Link
-                href={`/portal/teacher/students/${student.id}`}
-                className="block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 hover:shadow-lg hover:border-sky-200 dark:hover:border-sky-700 transition-all group"
-              >
+              <div className="block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
                 {/* Avatar */}
                 <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${GRADE_COLORS[student.grade_level] || "from-sky-400 to-blue-500"} flex items-center justify-center text-white text-2xl font-bold mb-4 group-hover:scale-105 transition-transform`}>
                   {student.nickname?.charAt(0) || student.full_name.charAt(0)}
@@ -81,11 +77,10 @@ export default function TeacherStudentsPage() {
                 <div className="mt-4 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-xs text-sky-500">
                     <BookOpen className="w-3.5 h-3.5" />
-                    Lihat Jurnal
+                    Data tersambung ke entri harian
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-sky-400 transition-colors" />
                 </div>
-              </Link>
+              </div>
             </motion.div>
           ))}
         </div>

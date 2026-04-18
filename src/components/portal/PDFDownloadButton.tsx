@@ -263,7 +263,14 @@ export default function PDFDownloadButton({ report, student, entries }: Props) {
       let y2 = 28;
 
       // ── Summary section ─────────────────────────────────────
-      const sections = [
+      const sections: {
+        title: string;
+        emoji: string;
+        contentID: string | null | undefined;
+        contentEN: string | null | undefined;
+        color: readonly [number, number, number];
+        bgFill: [number, number, number];
+      }[] = [
         {
           title: "Ringkasan Perkembangan Belajar",
           emoji: "📋",
@@ -279,14 +286,6 @@ export default function PDFDownloadButton({ report, student, entries }: Props) {
           contentEN: report.achievements_en,
           color: EMERALD,
           bgFill: [240, 253, 244] as [number, number, number],
-        },
-        {
-          title: "Area yang Perlu Dikembangkan",
-          emoji: "💪",
-          contentID: report.areas_to_improve ?? undefined,
-          contentEN: (report as any).areas_to_improve_en ?? undefined,
-          color: AMBER,
-          bgFill: [255, 251, 235] as [number, number, number],
         },
         {
           title: "Target & Tujuan Bulan Berikutnya",

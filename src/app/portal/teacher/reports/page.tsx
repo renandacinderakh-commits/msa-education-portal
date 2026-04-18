@@ -195,6 +195,51 @@ export default function TeacherReportsPage() {
     setTranslating(false);
   };
 
+  const handleGenerateSummary = () => {
+    if (!form.student_id) {
+      setFormError("Pilih murid terlebih dahulu");
+      return;
+    }
+
+    const student = students.find((item) => item.id === form.student_id);
+    const topics = Array.from(
+      new Set(
+        monthEntries
+          .map((entry) => entry.topics_taught || entry.session_title)
+          .filter(Boolean)
+      )
+    ).slice(0, 5);
+    const avgStars = monthEntries.length
+      ? monthEntries.reduce((sum, entry) => sum + (entry.overall_stars || 0), 0) / monthEntries.length
+      : 0;
+    const scoreSummary = Object.entries(getConsolidatedScores())
+      .map(([key, value]) => {
+        const category = SCORE_CATEGORIES.find((item) => item.key === key);
+        return `${category?.label_id ?? key}: ${value}/5`;
+      })
+      .slice(0, 6)
+      .join(", ");
+
+    const name = student?.full_name ?? "Murid";
+    const topicText = topics.length ? topics.join(", ") : "materi inti bulan ini";
+    const scoreText = scoreSummary || "nilai perkembangan akan semakin lengkap setelah entri harian ditambahkan";
+
+    setForm((current) => ({
+      ...current,
+      summary: `${name} mengikuti ${monthEntries.length} sesi pada ${current.period_label}. Fokus belajar mencakup ${topicText}. Secara umum progress terlihat stabil dengan rata-rata ${avgStars.toFixed(1)}/5, terutama saat kegiatan dimulai dari contoh konkret, latihan terpandu, lalu refleksi singkat.`,
+      summary_en: `${name} attended ${monthEntries.length} sessions in ${current.period_label}. Learning focus included ${topicText}. Overall progress is steady with an average of ${avgStars.toFixed(1)}/5, especially when activities start with concrete examples, guided practice, and short reflection.`,
+      achievements: `Indikator kuat bulan ini: ${scoreText}. ${name} menunjukkan partisipasi yang baik dan mulai lebih konsisten mengikuti alur belajar.`,
+      achievements_en: `Strong indicators this month: ${scoreText}. ${name} showed positive participation and is becoming more consistent in following the learning flow.`,
+      areas_to_improve: `Area yang perlu dijaga: konsistensi latihan, transisi antar aktivitas, dan penguatan konsep yang masih baru. Jika terlihat lelah, gunakan jeda pendek sebelum lanjut ke tugas berikutnya.`,
+      areas_to_improve_en: `Areas to maintain: practice consistency, transitions between activities, and reinforcement of newer concepts. When fatigue appears, use a short pause before moving to the next task.`,
+      goals_next_month: `Target bulan berikutnya adalah memperkuat pemahaman lewat latihan singkat berulang, menambah keberanian menjelaskan proses berpikir, dan menjaga kemandirian saat menyelesaikan tugas.`,
+      goals_next_month_en: `Next month goals are to strengthen understanding through short repeated practice, build confidence in explaining thinking, and maintain independence when completing tasks.`,
+      recommendations: `Di rumah, lakukan review 10 menit dengan format ringan: tanya apa yang dipelajari, minta anak memberi contoh, lalu tutup dengan pujian spesifik. Keep it simple tapi konsisten.`,
+      recommendations_en: `At home, do a light 10-minute review: ask what was learned, invite the child to give an example, then close with specific praise. Keep it simple but consistent.`,
+    }));
+    setFormError("");
+  };
+
   const handleSubmit = async (publish: boolean) => {
     setFormError("");
     if (!form.student_id) { setFormError("Pilih murid terlebih dahulu"); return; }
@@ -203,6 +248,13 @@ export default function TeacherReportsPage() {
     setFormState("submitting");
     try {
       const consolidated_scores = getConsolidatedScores();
+      const recommendations = [form.recommendations, form.areas_to_improve && `Area support: ${form.areas_to_improve}`]
+        .filter(Boolean)
+        .join("\n\n");
+      const recommendations_en = [form.recommendations_en, form.areas_to_improve_en && `Support area: ${form.areas_to_improve_en}`]
+        .filter(Boolean)
+        .join("\n\n");
+
       const { error } = await supabase.from("monthly_reports").insert({
         student_id: form.student_id,
         teacher_id: teacherId,
@@ -212,16 +264,12 @@ export default function TeacherReportsPage() {
         consolidated_scores,
         summary: form.summary,
         summary_en: form.summary_en,
-        highlights: form.highlights,
-        highlights_en: form.highlights_en,
         achievements: form.achievements,
         achievements_en: form.achievements_en,
-        areas_to_improve: form.areas_to_improve,
-        areas_to_improve_en: form.areas_to_improve_en,
         goals_next_month: form.goals_next_month,
         goals_next_month_en: form.goals_next_month_en,
-        recommendations: form.recommendations,
-        recommendations_en: form.recommendations_en,
+        recommendations,
+        recommendations_en,
         total_meetings: monthEntries.length,
         attendance_rate: 100,
         is_published: publish,
@@ -373,20 +421,27 @@ export default function TeacherReportsPage() {
                       </div>
                     ))}
 
-                    {/* Auto translate */}
+                    {/* Auto generate + translate */}
                     <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
-                          <Globe className="w-4 h-4" /> Terjemahan Bahasa Inggris
+                          <Globe className="w-4 h-4" /> Generate summary & terjemahan
                         </p>
-                        <button type="button" onClick={handleAutoTranslate} disabled={translating}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-60">
-                          {translating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
-                          {translating ? "Menerjemahkan..." : "Terjemah Semua"}
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={handleGenerateSummary}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-semibold rounded-lg hover:bg-sky-700">
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            Generate dari entri
+                          </button>
+                          <button type="button" onClick={handleAutoTranslate} disabled={translating}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-60">
+                            {translating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
+                            {translating ? "Menerjemahkan..." : "Terjemah Semua"}
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-indigo-500 mt-1">
-                        Untuk orang tua yang prefer membaca dalam Bahasa Inggris
+                        Summary otomatis mengambil topik, jumlah sesi, dan rata-rata score dari daily entries periode ini.
                       </p>
                     </div>
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { getDashboardPath, resolvePortalRole } from "@/lib/portal-access";
 import {
   GraduationCap,
   Eye,
@@ -46,17 +47,36 @@ export default function LoginPage() {
         // Get user role
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, full_name, email")
           .eq("id", data.user.id)
-          .single();
+          .maybeSingle();
 
-        if (profile?.role === "admin") {
-          router.push("/portal/admin");
-        } else if (profile?.role === "teacher") {
-          router.push("/portal/teacher");
-        } else {
-          router.push("/portal/parent");
+        const role = resolvePortalRole({
+          profileRole: profile?.role,
+          email: data.user.email,
+          metadata: data.user.user_metadata,
+        });
+
+        if (!role) {
+          await supabase.auth.signOut();
+          setError("Akun ini belum punya role portal. Hubungi admin MSA untuk mapping role.");
+          return;
         }
+
+        if (!profile) {
+          await supabase.from("profiles").upsert({
+            id: data.user.id,
+            role,
+            full_name:
+              data.user.user_metadata?.full_name ||
+              data.user.user_metadata?.name ||
+              data.user.email?.split("@")[0] ||
+              "User",
+            email: data.user.email,
+          });
+        }
+
+        router.push(getDashboardPath(role));
         router.refresh();
       }
     } catch {

@@ -176,7 +176,7 @@ export default function TeacherDashboard() {
               students.slice(0, 5).map((student) => (
                 <Link
                   key={student.id}
-                  href={`/portal/teacher/students/${student.id}`}
+                  href="/portal/teacher/students"
                   className="flex items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                 >
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm">

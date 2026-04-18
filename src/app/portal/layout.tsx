@@ -7,6 +7,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/supabase/types";
 import {
+  getDashboardPath,
+  getExpectedRoleFromPath,
+  resolvePortalRole,
+} from "@/lib/portal-access";
+import {
   LayoutDashboard,
   Users,
   GraduationCap,
@@ -86,10 +91,44 @@ export default function PortalLayout({
           .from("profiles")
           .select("*")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
+
+        const role = resolvePortalRole({
+          profileRole: data?.role,
+          email: user.email,
+          metadata: user.user_metadata,
+        });
+
+        if (!role) {
+          await supabase.auth.signOut();
+          router.push("/portal/login");
+          return;
+        }
+
+        const expectedRole = getExpectedRoleFromPath(pathname);
+        if (expectedRole && expectedRole !== role) {
+          router.replace(getDashboardPath(role));
+          return;
+        }
 
         if (mounted) {
-          if (data) setProfile(data as Profile);
+          setProfile(
+            data
+              ? ({ ...data, role } as Profile)
+              : ({
+                  id: user.id,
+                  role,
+                  full_name:
+                    user.user_metadata?.full_name ||
+                    user.user_metadata?.name ||
+                    user.email?.split("@")[0] ||
+                    "User",
+                  email: user.email ?? "",
+                  whatsapp: null,
+                  avatar_url: null,
+                  created_at: new Date().toISOString(),
+                } as Profile)
+          );
           setLoading(false);
         }
       } catch {
@@ -115,7 +154,7 @@ export default function PortalLayout({
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [supabase, router]);
+  }, [supabase, router, pathname]);
 
   // ✅ FIX: useCallback prevents new function reference every render
   const handleLogout = useCallback(async () => {
@@ -144,12 +183,13 @@ export default function PortalLayout({
     return <>{children}</>;
   }
 
-  const navItems =
-    profile?.role === "admin"
-      ? ADMIN_NAV
-      : profile?.role === "teacher"
-      ? TEACHER_NAV
-      : PARENT_NAV;
+  const navItems = !profile
+    ? []
+    : profile.role === "admin"
+    ? ADMIN_NAV
+    : profile.role === "teacher"
+    ? TEACHER_NAV
+    : PARENT_NAV;
 
   const roleLabel =
     profile?.role === "admin"
