@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Loader2, CheckCircle, FileText } from "lucide-react";
-import type { MonthlyReport, Student, DailyEntry } from "@/lib/supabase/types";
-import { SCORE_CATEGORIES } from "@/lib/supabase/types";
+import { CheckCircle, Download, FileText, Loader2 } from "lucide-react";
+import type { DailyEntry, MonthlyReport, Student } from "@/lib/supabase/types";
+import { SCORE_CATEGORIES, STAR_LABELS } from "@/lib/supabase/types";
 
 interface Props {
   report: MonthlyReport;
@@ -11,12 +11,582 @@ interface Props {
   entries: DailyEntry[];
 }
 
-const MONTHS_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+type GenState = "idle" | "generating" | "done" | "error";
+type RGB = readonly [number, number, number];
+type JsPDFDoc = import("jspdf").jsPDF;
+
+const PW = 210;
+const PH = 297;
+const ML = 14;
+const MR = 14;
+const CW = PW - ML - MR;
+
+const COLORS = {
+  ink: [15, 23, 42] as const,
+  slate: [71, 85, 105] as const,
+  muted: [148, 163, 184] as const,
+  line: [226, 232, 240] as const,
+  soft: [248, 250, 252] as const,
+  sky: [14, 165, 233] as const,
+  teal: [20, 184, 166] as const,
+  emerald: [16, 185, 129] as const,
+  amber: [245, 158, 11] as const,
+  rose: [244, 63, 94] as const,
+  indigo: [99, 102, 241] as const,
+  white: [255, 255, 255] as const,
+};
+
+const FRAMEWORK_TAGS = [
+  "IB PYP inquiry",
+  "Montessori independence",
+  "EYFS observation",
+  "CASEL SEL",
 ];
 
-type GenState = "idle" | "generating" | "done" | "error";
+const cleanText = (value?: string | null) =>
+  (value || "-")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const safeDate = (value?: string | null) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const imageFormat = (dataUrl: string) =>
+  dataUrl.toLowerCase().includes("image/png") ? "PNG" : "JPEG";
+
+const imageToDataUrl = async (src?: string | null): Promise<string | null> => {
+  if (!src || typeof window === "undefined") return null;
+
+  try {
+    const url = src.startsWith("http") ? src : new URL(src, window.location.origin).toString();
+    const response = await fetch(url, { mode: "cors" });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+};
+
+const setFill = (pdf: JsPDFDoc, color: RGB) => pdf.setFillColor(...color);
+const setStroke = (pdf: JsPDFDoc, color: RGB) => pdf.setDrawColor(...color);
+const setText = (pdf: JsPDFDoc, color: RGB) => pdf.setTextColor(...color);
+
+const text = (
+  pdf: JsPDFDoc,
+  value: string | string[],
+  x: number,
+  y: number,
+  options?: Parameters<JsPDFDoc["text"]>[3]
+) => {
+  pdf.text(value, x, y, options);
+};
+
+const split = (pdf: JsPDFDoc, value: string, width: number) =>
+  pdf.splitTextToSize(cleanText(value), width) as string[];
+
+const drawHeader = (pdf: JsPDFDoc, title: string, student: Student, period: string) => {
+  setFill(pdf, COLORS.ink);
+  pdf.rect(0, 0, PW, 19, "F");
+  setFill(pdf, COLORS.sky);
+  pdf.rect(0, 0, 55, 19, "F");
+
+  setText(pdf, COLORS.white);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.5);
+  text(pdf, "MSA Education", ML, 11);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  text(pdf, cleanText(title), ML + 45, 11);
+  text(pdf, `${cleanText(student.full_name)} | ${cleanText(period)}`, PW - MR, 11, {
+    align: "right",
+  });
+};
+
+const drawFooter = (pdf: JsPDFDoc) => {
+  const total = pdf.getNumberOfPages();
+  for (let page = 1; page <= total; page += 1) {
+    pdf.setPage(page);
+    setStroke(pdf, COLORS.line);
+    pdf.setLineWidth(0.25);
+    pdf.line(ML, PH - 13, PW - MR, PH - 13);
+    setText(pdf, COLORS.muted);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7);
+    text(pdf, "MSA Education - Mindful, Supportive, Adaptive", ML, PH - 6);
+    text(pdf, `Page ${page} / ${total}`, PW - MR, PH - 6, { align: "right" });
+  }
+};
+
+const drawPhoto = (
+  pdf: JsPDFDoc,
+  dataUrl: string | null,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fallback: string,
+  radius = 3
+) => {
+  setFill(pdf, [224, 242, 254]);
+  pdf.roundedRect(x, y, w, h, radius, radius, "F");
+
+  if (dataUrl) {
+    try {
+      pdf.addImage(dataUrl, imageFormat(dataUrl), x, y, w, h);
+      setStroke(pdf, COLORS.white);
+      pdf.setLineWidth(1);
+      pdf.roundedRect(x, y, w, h, radius, radius, "S");
+      return;
+    } catch {
+      // Fallback below keeps the report printable even if an image URL is blocked.
+    }
+  }
+
+  setText(pdf, COLORS.sky);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(Math.min(w, h) * 0.55);
+  text(pdf, fallback.slice(0, 1).toUpperCase(), x + w / 2, y + h / 2 + 5, {
+    align: "center",
+  });
+};
+
+const drawPill = (pdf: JsPDFDoc, label: string, x: number, y: number, color: RGB) => {
+  setFill(pdf, color);
+  pdf.roundedRect(x, y, pdf.getTextWidth(label) + 8, 7, 3.5, 3.5, "F");
+  setText(pdf, COLORS.white);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(6.8);
+  text(pdf, label, x + 4, y + 4.9);
+};
+
+const drawProgressBar = (
+  pdf: JsPDFDoc,
+  x: number,
+  y: number,
+  width: number,
+  score: number,
+  color: RGB
+) => {
+  setFill(pdf, [241, 245, 249]);
+  pdf.roundedRect(x, y, width, 4, 2, 2, "F");
+  setFill(pdf, color);
+  pdf.roundedRect(x, y, Math.max(2, (score / 5) * width), 4, 2, 2, "F");
+};
+
+const averageScore = (report: MonthlyReport) => {
+  const values = Object.values(report.consolidated_scores || {}).filter(
+    (value): value is number => typeof value === "number"
+  );
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
+
+const moodLabel = (mood: string) => {
+  if (mood === "happy") return "Happy";
+  if (mood === "neutral") return "Steady";
+  return "Needs support";
+};
+
+const scoreLabel = (score: number) => {
+  const rounded = Math.max(1, Math.min(5, Math.round(score))) as keyof typeof STAR_LABELS;
+  return STAR_LABELS[rounded]?.en || "Progressing";
+};
+
+const drawNarrativeCard = (
+  pdf: JsPDFDoc,
+  y: number,
+  labelID: string,
+  contentID: string | null | undefined,
+  labelEN: string,
+  contentEN: string | null | undefined,
+  color: RGB
+) => {
+  const gap = 6;
+  const colW = (CW - gap) / 2;
+  const idLines = split(pdf, contentID || "-", colW - 10);
+  const enLines = split(pdf, contentEN || "-", colW - 10);
+  const height = Math.max(idLines.length, enLines.length) * 4.7 + 22;
+
+  setFill(pdf, COLORS.soft);
+  pdf.roundedRect(ML, y, CW, height, 4, 4, "F");
+  setStroke(pdf, COLORS.line);
+  pdf.setLineWidth(0.25);
+  pdf.roundedRect(ML, y, CW, height, 4, 4, "S");
+
+  setFill(pdf, color);
+  pdf.roundedRect(ML, y, 3, height, 1.5, 1.5, "F");
+
+  setText(pdf, color);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.5);
+  text(pdf, labelID, ML + 8, y + 9);
+  text(pdf, labelEN, ML + 8 + colW + gap, y + 9);
+
+  setText(pdf, COLORS.ink);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  text(pdf, idLines, ML + 8, y + 18);
+  setText(pdf, COLORS.slate);
+  text(pdf, enLines, ML + 8 + colW + gap, y + 18);
+
+  setStroke(pdf, COLORS.line);
+  pdf.line(ML + colW + 3, y + 8, ML + colW + 3, y + height - 8);
+
+  return y + height + 7;
+};
+
+const drawCover = (
+  pdf: JsPDFDoc,
+  student: Student,
+  report: MonthlyReport,
+  studentPhoto: string | null,
+  activityPhotos: (string | null)[]
+) => {
+  setFill(pdf, COLORS.ink);
+  pdf.rect(0, 0, PW, 70, "F");
+  setFill(pdf, COLORS.sky);
+  pdf.triangle(0, 0, 92, 0, 0, 70, "F");
+  setFill(pdf, COLORS.teal);
+  pdf.triangle(PW, 0, PW - 72, 0, PW, 70, "F");
+
+  setText(pdf, COLORS.white);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(22);
+  text(pdf, "Monthly Learning", ML, 24);
+  text(pdf, "Progress Report", ML, 35);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  text(pdf, "Laporan perkembangan belajar bulanan - bilingual", ML, 45);
+
+  let tagX = ML;
+  FRAMEWORK_TAGS.forEach((tag, index) => {
+    drawPill(pdf, tag, tagX, 54, [index % 2 ? 20 : 14, index % 2 ? 184 : 165, index % 2 ? 166 : 233]);
+    tagX += pdf.getTextWidth(tag) + 11;
+  });
+
+  drawPhoto(
+    pdf,
+    studentPhoto,
+    ML,
+    84,
+    42,
+    42,
+    student.nickname || student.full_name,
+    6
+  );
+
+  setText(pdf, COLORS.ink);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(18);
+  text(pdf, cleanText(student.full_name), ML + 51, 93);
+
+  setText(pdf, COLORS.slate);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.5);
+  text(pdf, `Nickname: ${cleanText(student.nickname || "-")}`, ML + 51, 101);
+  text(pdf, `Level: ${cleanText(student.grade_level)}`, ML + 51, 108);
+  text(pdf, `Date of birth: ${safeDate(student.date_of_birth)}`, ML + 51, 115);
+  text(pdf, `Period: ${cleanText(report.period_label)}`, ML + 51, 122);
+
+  const statsY = 84;
+  const statW = 35;
+  const statX = PW - MR - statW;
+  [
+    { label: "Meetings", value: String(report.total_meetings || entriesCount(report)), color: COLORS.sky },
+    { label: "Attendance", value: `${report.attendance_rate || 100}%`, color: COLORS.emerald },
+    { label: "Average", value: `${averageScore(report).toFixed(1)}/5`, color: COLORS.amber },
+  ].forEach((item, index) => {
+    const y = statsY + index * 17;
+    setFill(pdf, item.color);
+    pdf.roundedRect(statX, y, statW, 13, 3, 3, "F");
+    setText(pdf, COLORS.white);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    text(pdf, item.value, statX + statW / 2, y + 6, { align: "center" });
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(5.8);
+    text(pdf, item.label, statX + statW / 2, y + 10.6, { align: "center" });
+  });
+
+  let y = 143;
+  setText(pdf, COLORS.ink);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(11);
+  text(pdf, "Assessment Snapshot", ML, y);
+  text(pdf, "Ringkasan Penilaian", PW - MR, y, { align: "right" });
+  y += 9;
+
+  const categories = SCORE_CATEGORIES.filter((cat) => report.consolidated_scores?.[cat.key] != null);
+  categories.forEach((cat, index) => {
+    const colW = (CW - 6) / 2;
+    const x = ML + (index % 2) * (colW + 6);
+    const rowY = y + Math.floor(index / 2) * 17;
+    const score = Number(report.consolidated_scores?.[cat.key] || 0);
+
+    setText(pdf, COLORS.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.4);
+    text(pdf, cleanText(cat.label_id), x, rowY);
+    setText(pdf, COLORS.muted);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(6.3);
+    text(pdf, cleanText(cat.label_en), x, rowY + 4.2);
+    drawProgressBar(pdf, x, rowY + 7, colW - 18, score, COLORS.sky);
+    setText(pdf, COLORS.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7);
+    text(pdf, `${score}/5`, x + colW - 14, rowY + 10.4);
+  });
+
+  y += Math.ceil(categories.length / 2) * 17 + 7;
+  setFill(pdf, [240, 249, 255]);
+  pdf.roundedRect(ML, y, CW, 25, 4, 4, "F");
+  setText(pdf, COLORS.sky);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.5);
+  text(pdf, "What the score means", ML + 6, y + 8);
+  setText(pdf, COLORS.slate);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(7.2);
+  text(
+    pdf,
+    split(
+      pdf,
+      "Scores combine teacher observation, daily learning evidence, independence, communication, creativity, and social-emotional readiness.",
+      CW - 12
+    ),
+    ML + 6,
+    y + 15
+  );
+
+  const photos = activityPhotos.filter(Boolean).slice(0, 3);
+  if (photos.length > 0) {
+    y += 39;
+    setText(pdf, COLORS.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    text(pdf, "Learning Evidence Photos", ML, y);
+    y += 5;
+    photos.forEach((photo, index) => {
+      drawPhoto(pdf, photo, ML + index * 62, y, 56, 34, "A", 4);
+    });
+  }
+};
+
+const entriesCount = (report: MonthlyReport) => report.daily_entries?.length || 0;
+
+const drawNarrativePage = (pdf: JsPDFDoc, student: Student, report: MonthlyReport) => {
+  pdf.addPage();
+  drawHeader(pdf, "Narrative Summary", student, report.period_label);
+  let y = 31;
+
+  setText(pdf, COLORS.ink);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(14);
+  text(pdf, "Bilingual Learning Narrative", ML, y);
+  y += 7;
+  setText(pdf, COLORS.slate);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  text(
+    pdf,
+    split(
+      pdf,
+      "Each section pairs Bahasa Indonesia and English so parents can read the same learning story clearly from both perspectives.",
+      CW
+    ),
+    ML,
+    y
+  );
+  y += 15;
+
+  y = drawNarrativeCard(
+    pdf,
+    y,
+    "Ringkasan perkembangan",
+    report.summary,
+    "Learning summary",
+    report.summary_en,
+    COLORS.sky
+  );
+  y = drawNarrativeCard(
+    pdf,
+    y,
+    "Pencapaian bulan ini",
+    report.achievements,
+    "Monthly achievements",
+    report.achievements_en,
+    COLORS.emerald
+  );
+  y = drawNarrativeCard(
+    pdf,
+    y,
+    "Target bulan berikutnya",
+    report.goals_next_month,
+    "Next-month goals",
+    report.goals_next_month_en,
+    COLORS.indigo
+  );
+  drawNarrativeCard(
+    pdf,
+    y,
+    "Rekomendasi orang tua",
+    report.recommendations,
+    "Parent recommendations",
+    report.recommendations_en,
+    COLORS.rose
+  );
+};
+
+const drawSessionPages = (
+  pdf: JsPDFDoc,
+  student: Student,
+  report: MonthlyReport,
+  entries: DailyEntry[],
+  activityPhotos: (string | null)[]
+) => {
+  pdf.addPage();
+  drawHeader(pdf, "Learning Evidence Log", student, report.period_label);
+
+  let y = 31;
+  setText(pdf, COLORS.ink);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(13);
+  text(pdf, "Daily Session Evidence", ML, y);
+  y += 8;
+
+  const orderedEntries = [...entries].sort(
+    (a, b) => new Date(a.entry_date).getTime() - new Date(b.entry_date).getTime()
+  );
+
+  if (!orderedEntries.length) {
+    setText(pdf, COLORS.slate);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
+    text(pdf, "No daily entries are attached to this monthly report yet.", ML, y);
+    return;
+  }
+
+  orderedEntries.forEach((entry, index) => {
+    const estimatedHeight = 49;
+    if (y + estimatedHeight > PH - 22) {
+      pdf.addPage();
+      drawHeader(pdf, "Learning Evidence Log", student, report.period_label);
+      y = 31;
+    }
+
+    const photo = activityPhotos[index] || null;
+    setFill(pdf, COLORS.soft);
+    pdf.roundedRect(ML, y, CW, estimatedHeight - 5, 4, 4, "F");
+    setStroke(pdf, COLORS.line);
+    pdf.setLineWidth(0.25);
+    pdf.roundedRect(ML, y, CW, estimatedHeight - 5, 4, 4, "S");
+
+    drawPhoto(pdf, photo, ML + 4, y + 4, 31, 31, String(entry.meeting_number), 3);
+
+    const x = ML + 42;
+    setText(pdf, COLORS.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    text(pdf, `#${entry.meeting_number} ${cleanText(entry.session_title)}`, x, y + 8);
+
+    setText(pdf, COLORS.muted);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7);
+    text(
+      pdf,
+      `${safeDate(entry.entry_date)} | Mood: ${moodLabel(entry.mood)} | Score: ${entry.overall_stars || 0}/5`,
+      x,
+      y + 14
+    );
+
+    setText(pdf, COLORS.slate);
+    pdf.setFontSize(7.4);
+    text(pdf, split(pdf, entry.activities_description || entry.teacher_notes, 124).slice(0, 3), x, y + 22);
+
+    const score = entry.overall_stars || 0;
+    drawProgressBar(pdf, x, y + 36, 82, score, COLORS.amber);
+    setText(pdf, COLORS.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7);
+    text(pdf, scoreLabel(score), x + 88, y + 39.3);
+
+    y += estimatedHeight;
+  });
+};
+
+const drawClosingPage = (pdf: JsPDFDoc, student: Student, report: MonthlyReport) => {
+  pdf.addPage();
+  drawHeader(pdf, "Closing Page", student, report.period_label);
+
+  let y = 42;
+  setFill(pdf, [240, 249, 255]);
+  pdf.roundedRect(ML, y, CW, 32, 5, 5, "F");
+  setStroke(pdf, COLORS.sky);
+  pdf.setLineWidth(0.4);
+  pdf.roundedRect(ML, y, CW, 32, 5, 5, "S");
+
+  setText(pdf, COLORS.sky);
+  pdf.setFont("helvetica", "bolditalic");
+  pdf.setFontSize(10.5);
+  text(pdf, "Every child learns at their own rhythm.", PW / 2, y + 12, { align: "center" });
+  text(pdf, "Our role is to guide each step with patience and evidence.", PW / 2, y + 21, {
+    align: "center",
+  });
+
+  y += 54;
+  const sigW = (CW - 10) / 2;
+  [
+    { x: ML, title: "Prepared by", line1: "Learning Facilitator", line2: "MSA Education" },
+    { x: ML + sigW + 10, title: "Acknowledged by", line1: "Parent / Guardian", line2: student.full_name },
+  ].forEach((item) => {
+    setFill(pdf, COLORS.soft);
+    pdf.roundedRect(item.x, y, sigW, 45, 4, 4, "F");
+    setStroke(pdf, COLORS.line);
+    pdf.roundedRect(item.x, y, sigW, 45, 4, 4, "S");
+
+    setText(pdf, COLORS.slate);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    text(pdf, item.title, item.x + sigW / 2, y + 10, { align: "center" });
+    setStroke(pdf, [203, 213, 225]);
+    pdf.line(item.x + 17, y + 24, item.x + sigW - 17, y + 24);
+    text(pdf, item.line1, item.x + sigW / 2, y + 34, { align: "center" });
+    pdf.setFontSize(7);
+    text(pdf, cleanText(item.line2), item.x + sigW / 2, y + 40, { align: "center" });
+  });
+
+  y += 66;
+  setText(pdf, COLORS.muted);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(7.2);
+  text(
+    pdf,
+    split(
+      pdf,
+      `Generated on ${safeDate(new Date().toISOString())}. This document summarizes teacher observations, daily learning evidence, monthly progress, and next-step recommendations.`,
+      CW
+    ),
+    ML,
+    y
+  );
+};
 
 export default function PDFDownloadButton({ report, student, entries }: Props) {
   const [state, setState] = useState<GenState>("idle");
@@ -24,558 +594,24 @@ export default function PDFDownloadButton({ report, student, entries }: Props) {
   const generatePDF = async () => {
     setState("generating");
     try {
-      // ✅ Dynamic import — runs only on client, no SSR issues
-      const jsPDFModule = await import("jspdf");
-      const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
+      const { jsPDF } = await import("jspdf");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
+      const activityUrls = entries.flatMap((entry) => entry.photo_urls || []).slice(0, 12);
+      const [studentPhoto, ...activityPhotos] = await Promise.all([
+        imageToDataUrl(student.photo_url),
+        ...activityUrls.map((url) => imageToDataUrl(url)),
+      ]);
 
-      const PW = 210; // page width
-      const PH = 297; // page height
-      const ML = 14;  // margin left
-      const MR = 14;  // margin right
-      const CW = PW - ML - MR; // content width
+      drawCover(pdf, student, report, studentPhoto, activityPhotos);
+      drawNarrativePage(pdf, student, report);
+      drawSessionPages(pdf, student, report, entries, activityPhotos);
+      drawClosingPage(pdf, student, report);
+      drawFooter(pdf);
 
-      // ── Color helpers ──────────────────────────────────────────
-      const setFill = (r: number, g: number, b: number) =>
-        pdf.setFillColor(r, g, b);
-      const setStroke = (r: number, g: number, b: number) =>
-        pdf.setDrawColor(r, g, b);
-      const setColor = (r: number, g: number, b: number) =>
-        pdf.setTextColor(r, g, b);
-
-      // Brand colors
-      const SKY = [14, 165, 233] as const;
-      const TEAL = [20, 184, 166] as const;
-      const INDIGO = [99, 102, 241] as const;
-      const SLATE_800 = [30, 41, 59] as const;
-      const SLATE_600 = [71, 85, 105] as const;
-      const SLATE_400 = [148, 163, 184] as const;
-      const EMERALD = [16, 185, 129] as const;
-      const AMBER = [245, 158, 11] as const;
-      const ROSE = [244, 63, 94] as const;
-      const WHITE = [255, 255, 255] as const;
-      const SLATE_50 = [248, 250, 252] as const;
-      const SLATE_100 = [241, 245, 249] as const;
-
-      // ═══════════════════════════════════════════════════════════
-      // PAGE 1 — COVER
-      // ═══════════════════════════════════════════════════════════
-
-      // --- Gradient header block ---
-      setFill(...SKY);
-      pdf.rect(0, 0, PW, 60, "F");
-
-      // Diagonal accent
-      setFill(...TEAL);
-      pdf.triangle(PW - 60, 0, PW, 0, PW, 60, "F");
-
-      // School logo circle
-      setFill(255, 255, 255);
-      pdf.circle(ML + 14, 28, 12, "F");
-      setColor(...SKY);
-      pdf.setFontSize(14);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("M", ML + 14, 32, { align: "center" });
-
-      // School name
-      setColor(...WHITE);
-      pdf.setFontSize(18);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("MSA Education", ML + 32, 22);
-
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "normal");
-      setColor(186, 230, 253); // sky-200
-      pdf.text("Mindful  •  Supportive  •  Adaptive", ML + 32, 29);
-      pdf.text("Les Privat, Homeschooling & Pendampingan ABK", ML + 32, 35);
-      pdf.text("Jakarta Utara  •  Jakarta Pusat  •  Jakarta Timur", ML + 32, 41);
-
-      // Report type label
-      setFill(255, 255, 255);
-      pdf.roundedRect(ML, 47, 110, 9, 2, 2, "F");
-      setColor(...SKY);
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("LAPORAN PERKEMBANGAN BELAJAR BULANAN", ML + 55, 53, { align: "center" });
-
-      // --- Student info card ---
-      setFill(...SLATE_50);
-      pdf.roundedRect(ML, 68, CW, 55, 4, 4, "F");
-      setStroke(226, 232, 240);
-      pdf.setLineWidth(0.3);
-      pdf.roundedRect(ML, 68, CW, 55, 4, 4, "S");
-
-      // Avatar
-      const gradient = ["from-sky-500", "to-teal-500"];
-      setFill(...SKY);
-      pdf.circle(ML + 18, 90, 14, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(16);
-      pdf.setFont("helvetica", "bold");
-      const initial = (student.nickname || student.full_name).charAt(0).toUpperCase();
-      pdf.text(initial, ML + 18, 95, { align: "center" });
-
-      // Student details
-      setColor(...SLATE_800);
-      pdf.setFontSize(14);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(student.full_name, ML + 38, 78);
-
-      setColor(...SLATE_600);
-      pdf.setFontSize(9);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`Panggilan : ${student.nickname || "-"}`, ML + 38, 85);
-      pdf.text(`Jenjang    : ${student.grade_level}`, ML + 38, 92);
-      pdf.text(
-        `Lahir        : ${
-          student.date_of_birth
-            ? new Date(student.date_of_birth).toLocaleDateString("id-ID", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })
-            : "-"
-        }`,
-        ML + 38,
-        99
-      );
-
-      // Period info
-      setColor(...SLATE_600);
-      pdf.text(`Periode      : ${report.period_label}`, ML + 38, 106);
-
-      // Stats boxes
-      const statsX = PW - MR - 60;
-
-      setFill(...SKY);
-      pdf.roundedRect(statsX, 70, 58, 22, 3, 3, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(20);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(String(report.total_meetings || 0), statsX + 29, 83, { align: "center" });
-      pdf.setFontSize(7);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("Total Pertemuan", statsX + 29, 89, { align: "center" });
-
-      setFill(...EMERALD);
-      pdf.roundedRect(statsX, 95, 58, 22, 3, 3, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(20);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(`${report.attendance_rate || 100}%`, statsX + 29, 108, { align: "center" });
-      pdf.setFontSize(7);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("Kehadiran", statsX + 29, 114, { align: "center" });
-
-      // --- Score overview ---
-      let yPos = 135;
-
-      setColor(...SLATE_800);
-      pdf.setFontSize(11);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("Ringkasan Penilaian", ML, yPos);
-
-      // Average star rating
-      const allScores = Object.values(report.consolidated_scores || {});
-      const avgScore =
-        allScores.length > 0
-          ? allScores.reduce((a: number, b: unknown) => a + ((b as number) || 0), 0) /
-            allScores.length
-          : 0;
-
-      yPos += 8;
-      setFill(...AMBER);
-      pdf.roundedRect(ML, yPos, 60, 14, 3, 3, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(11);
-      pdf.setFont("helvetica", "bold");
-      const stars = "★".repeat(Math.round(avgScore)) + "☆".repeat(5 - Math.round(avgScore));
-      pdf.text(`${stars}  ${avgScore.toFixed(1)}/5`, ML + 30, yPos + 9.5, { align: "center" });
-
-      // Score bars per category
-      yPos += 22;
-      const cats = SCORE_CATEGORIES.filter(
-        (c) => report.consolidated_scores?.[c.key] != null
-      );
-
-      if (cats.length > 0) {
-        const colW = (CW - 4) / 2;
-        cats.forEach((cat, idx) => {
-          const col = idx % 2;
-          const row = Math.floor(idx / 2);
-          const x = ML + col * (colW + 4);
-          const y = yPos + row * 18;
-
-          const score = (report.consolidated_scores?.[cat.key] as number) || 0;
-          const barW = colW - 35;
-          const fillW = (score / 5) * barW;
-
-          // Label
-          setColor(...SLATE_600);
-          pdf.setFontSize(7.5);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(`${cat.icon} ${cat.label_id}`, x, y + 5);
-
-          // Bar background
-          setFill(...SLATE_100);
-          pdf.roundedRect(x, y + 7, barW, 4, 1, 1, "F");
-
-          // Bar fill
-          setFill(...SKY);
-          if (fillW > 0) {
-            pdf.roundedRect(x, y + 7, fillW, 4, 1, 1, "F");
-          }
-
-          // Score value
-          setColor(...SLATE_800);
-          pdf.setFontSize(8);
-          pdf.setFont("helvetica", "bold");
-          pdf.text(`${score}/5`, x + barW + 4, y + 10.5);
-        });
-        yPos += Math.ceil(cats.length / 2) * 18 + 8;
-      }
-
-      // ═══════════════════════════════════════════════════════════
-      // PAGE 2 — NARRATIVE REPORT
-      // ═══════════════════════════════════════════════════════════
-      pdf.addPage();
-
-      // Page header
-      setFill(...SKY);
-      pdf.rect(0, 0, PW, 18, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(9);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("MSA Education — Laporan Perkembangan Belajar", ML, 11);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(
-        `${student.full_name}  |  ${report.period_label}`,
-        PW - MR,
-        11,
-        { align: "right" }
-      );
-
-      let y2 = 28;
-
-      // ── Summary section ─────────────────────────────────────
-      const sections: {
-        title: string;
-        emoji: string;
-        contentID: string | null | undefined;
-        contentEN: string | null | undefined;
-        color: readonly [number, number, number];
-        bgFill: [number, number, number];
-      }[] = [
-        {
-          title: "Ringkasan Perkembangan Belajar",
-          emoji: "📋",
-          contentID: report.summary,
-          contentEN: report.summary_en,
-          color: SKY,
-          bgFill: [239, 246, 255] as [number, number, number],
-        },
-        {
-          title: "Pencapaian & Prestasi",
-          emoji: "🏆",
-          contentID: report.achievements,
-          contentEN: report.achievements_en,
-          color: EMERALD,
-          bgFill: [240, 253, 244] as [number, number, number],
-        },
-        {
-          title: "Target & Tujuan Bulan Berikutnya",
-          emoji: "🎯",
-          contentID: report.goals_next_month,
-          contentEN: report.goals_next_month_en,
-          color: INDIGO,
-          bgFill: [238, 242, 255] as [number, number, number],
-        },
-        {
-          title: "Rekomendasi untuk Orang Tua",
-          emoji: "💡",
-          contentID: report.recommendations,
-          contentEN: report.recommendations_en,
-          color: ROSE,
-          bgFill: [255, 241, 242] as [number, number, number],
-        },
-      ];
-
-      for (const section of sections) {
-        if (!section.contentID) continue;
-
-        // Check space remaining, add new page if needed
-        if (y2 > PH - 40) {
-          pdf.addPage();
-          setFill(...SKY);
-          pdf.rect(0, 0, PW, 18, "F");
-          setColor(...WHITE);
-          pdf.setFontSize(9);
-          pdf.setFont("helvetica", "bold");
-          pdf.text("MSA Education — Laporan Perkembangan Belajar", ML, 11);
-          pdf.text(`${student.full_name}  |  ${report.period_label}`, PW - MR, 11, { align: "right" });
-          y2 = 28;
-        }
-
-        // Section title
-        setFill(...section.color);
-        pdf.circle(ML + 3, y2 + 3.5, 3.5, "F");
-        setColor(...section.color);
-        pdf.setFontSize(10);
-        pdf.setFont("helvetica", "bold");
-        pdf.text(`${section.emoji}  ${section.title}`, ML + 9, y2 + 5.5);
-        y2 += 12;
-
-        // ID content
-        setFill(...section.bgFill);
-        const idLines = pdf.splitTextToSize(section.contentID, CW - 10) as string[];
-        const idH = idLines.length * 5.5 + 8;
-        pdf.roundedRect(ML, y2, CW, idH, 2, 2, "F");
-        setColor(...SLATE_800);
-        pdf.setFontSize(8.5);
-        pdf.setFont("helvetica", "normal");
-        pdf.text(idLines, ML + 5, y2 + 6);
-        y2 += idH + 4;
-
-        // EN content if available
-        if (section.contentEN) {
-          setFill(...SLATE_50);
-          const enLines = pdf.splitTextToSize(
-            `🇬🇧  ${section.contentEN}`,
-            CW - 10
-          ) as string[];
-          const enH = enLines.length * 5 + 8;
-          pdf.roundedRect(ML, y2, CW, enH, 2, 2, "F");
-          setColor(...SLATE_400);
-          pdf.setFontSize(7.5);
-          pdf.setFont("helvetica", "italic");
-          pdf.text(enLines, ML + 5, y2 + 5.5);
-          y2 += enH + 4;
-        }
-
-        y2 += 6;
-      }
-
-      // ═══════════════════════════════════════════════════════════
-      // PAGE 3 — SESSION LOG
-      // ═══════════════════════════════════════════════════════════
-      if (entries.length > 0) {
-        pdf.addPage();
-        setFill(...SKY);
-        pdf.rect(0, 0, PW, 18, "F");
-        setColor(...WHITE);
-        pdf.setFontSize(9);
-        pdf.setFont("helvetica", "bold");
-        pdf.text("MSA Education — Catatan Sesi Belajar", ML, 11);
-        pdf.text(`${student.full_name}  |  ${report.period_label}`, PW - MR, 11, { align: "right" });
-
-        let y3 = 26;
-
-        setColor(...SLATE_800);
-        pdf.setFontSize(11);
-        pdf.setFont("helvetica", "bold");
-        pdf.text("📓 Log Sesi Belajar Bulanan", ML, y3);
-        y3 += 8;
-
-        // Table header
-        setFill(...SKY);
-        pdf.rect(ML, y3, CW, 8, "F");
-        setColor(...WHITE);
-        pdf.setFontSize(7.5);
-        pdf.setFont("helvetica", "bold");
-        const cols = {
-          no: ML + 3,
-          date: ML + 14,
-          title: ML + 45,
-          mood: ML + 110,
-          stars: ML + 128,
-        };
-        pdf.text("#", cols.no, y3 + 5.5);
-        pdf.text("Tanggal", cols.date, y3 + 5.5);
-        pdf.text("Topik Sesi", cols.title, y3 + 5.5);
-        pdf.text("Mood", cols.mood, y3 + 5.5);
-        pdf.text("Nilai", cols.stars, y3 + 5.5);
-        y3 += 8;
-
-        entries.forEach((entry, i) => {
-          if (y3 > PH - 25) {
-            pdf.addPage();
-            setFill(...SKY);
-            pdf.rect(0, 0, PW, 18, "F");
-            setColor(...WHITE);
-            pdf.setFontSize(9);
-            pdf.setFont("helvetica", "bold");
-            pdf.text("MSA Education — Catatan Sesi Belajar", ML, 11);
-            pdf.text(`${student.full_name}  |  ${report.period_label}`, PW - MR, 11, { align: "right" });
-            y3 = 26;
-
-            // Re-draw table header
-            setFill(...SKY);
-            pdf.rect(ML, y3, CW, 8, "F");
-            setColor(...WHITE);
-            pdf.setFontSize(7.5);
-            pdf.setFont("helvetica", "bold");
-            pdf.text("#", cols.no, y3 + 5.5);
-            pdf.text("Tanggal", cols.date, y3 + 5.5);
-            pdf.text("Topik Sesi", cols.title, y3 + 5.5);
-            pdf.text("Mood", cols.mood, y3 + 5.5);
-            pdf.text("Nilai", cols.stars, y3 + 5.5);
-            y3 += 8;
-          }
-
-          // Alternating rows
-          if (i % 2 === 0) {
-            setFill(...SLATE_50);
-            pdf.rect(ML, y3, CW, 7, "F");
-          }
-
-          const dateStr = new Date(entry.entry_date).toLocaleDateString(
-            "id-ID",
-            { day: "2-digit", month: "short", year: "2-digit" }
-          );
-          const moodLabel =
-            entry.mood === "happy"
-              ? "😊 Semangat"
-              : entry.mood === "neutral"
-              ? "😐 Baik"
-              : "💙 Support";
-          const starsStr =
-            "★".repeat(entry.overall_stars || 0) +
-            "☆".repeat(5 - (entry.overall_stars || 0));
-
-          setColor(...SLATE_600);
-          pdf.setFontSize(7.5);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(String(entry.meeting_number), cols.no, y3 + 4.8);
-          pdf.text(dateStr, cols.date, y3 + 4.8);
-          pdf.text(
-            pdf.splitTextToSize(entry.session_title || "Sesi Belajar", 60)[0] as string,
-            cols.title,
-            y3 + 4.8
-          );
-          pdf.text(moodLabel, cols.mood, y3 + 4.8);
-          setColor(...AMBER);
-          pdf.setFontSize(7);
-          pdf.text(starsStr, cols.stars, y3 + 4.8);
-
-          y3 += 7;
-        });
-      }
-
-      // ═══════════════════════════════════════════════════════════
-      // LAST PAGE — Signature & Footer
-      // ═══════════════════════════════════════════════════════════
-      pdf.addPage();
-      setFill(...SKY);
-      pdf.rect(0, 0, PW, 18, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(9);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("MSA Education — Halaman Penutup", ML, 11);
-      pdf.text(`${student.full_name}  |  ${report.period_label}`, PW - MR, 11, { align: "right" });
-
-      let yLast = 34;
-
-      // Motivational quote box
-      setFill(239, 246, 255); // blue-50
-      pdf.roundedRect(ML, yLast, CW, 22, 3, 3, "F");
-      setStroke(...SKY);
-      pdf.setLineWidth(0.5);
-      pdf.roundedRect(ML, yLast, CW, 22, 3, 3, "S");
-      setColor(...SKY);
-      pdf.setFontSize(10);
-      pdf.setFont("helvetica", "bolditalic");
-      pdf.text(
-        '"Setiap anak memiliki ritme belajarnya sendiri.',
-        PW / 2,
-        yLast + 9,
-        { align: "center" }
-      );
-      pdf.text(
-        "Tugas kita bukan memaksa mereka berlari,",
-        PW / 2,
-        yLast + 15,
-        { align: "center" }
-      );
-      pdf.text('melainkan menemani mereka melangkah."', PW / 2, yLast + 21, {
-        align: "center",
-      });
-      yLast += 30;
-      setColor(...SLATE_400);
-      pdf.setFontSize(7.5);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("— Miss Sita, Pendiri MSA Education", PW / 2, yLast, { align: "center" });
-      yLast += 16;
-
-      // Signature section
-      const sigW = (CW - 8) / 2;
-
-      setFill(...SLATE_50);
-      pdf.roundedRect(ML, yLast, sigW, 40, 3, 3, "F");
-      setStroke(226, 232, 240);
-      pdf.setLineWidth(0.3);
-      pdf.roundedRect(ML, yLast, sigW, 40, 3, 3, "S");
-
-      setColor(...SLATE_600);
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("Disiapkan oleh:", ML + sigW / 2, yLast + 8, { align: "center" });
-      setFill(200, 215, 230);
-      pdf.rect(ML + 15, yLast + 15, sigW - 30, 0.5, "F");
-      pdf.text("Guru Pendamping", ML + sigW / 2, yLast + 32, { align: "center" });
-      pdf.setFontSize(7.5);
-      pdf.text("MSA Education", ML + sigW / 2, yLast + 38, { align: "center" });
-
-      const sig2X = ML + sigW + 8;
-      setFill(...SLATE_50);
-      pdf.roundedRect(sig2X, yLast, sigW, 40, 3, 3, "F");
-      pdf.roundedRect(sig2X, yLast, sigW, 40, 3, 3, "S");
-
-      pdf.setFontSize(8);
-      pdf.text("Diketahui oleh:", sig2X + sigW / 2, yLast + 8, { align: "center" });
-      setFill(200, 215, 230);
-      pdf.rect(sig2X + 15, yLast + 15, sigW - 30, 0.5, "F");
-      setColor(...SLATE_600);
-      pdf.text("Orang Tua / Wali", sig2X + sigW / 2, yLast + 32, { align: "center" });
-      pdf.setFontSize(7.5);
-      pdf.text(student.full_name, sig2X + sigW / 2, yLast + 38, { align: "center" });
-
-      yLast += 56;
-
-      // Footer bar
-      setFill(...SKY);
-      pdf.rect(0, PH - 14, PW, 14, "F");
-      setColor(...WHITE);
-      pdf.setFontSize(7.5);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("MSA Education  •  Mindful. Supportive. Adaptive.", ML, PH - 6);
-      pdf.text(
-        `Digenerate pada: ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}`,
-        PW - MR,
-        PH - 6,
-        { align: "right" }
-      );
-
-      // Add footer to all previous pages
-      const totalPages = pdf.getNumberOfPages();
-      for (let p = 1; p <= totalPages; p++) {
-        pdf.setPage(p);
-        setFill(...SKY);
-        pdf.rect(0, PH - 12, PW, 12, "F");
-        setColor(...WHITE);
-        pdf.setFontSize(7);
-        pdf.text("MSA Education  •  Mindful. Supportive. Adaptive.", ML, PH - 4.5);
-        pdf.text(`Halaman ${p} / ${totalPages}`, PW - MR, PH - 4.5, { align: "right" });
-      }
-
-      // ── Save ────────────────────────────────────────────────
-      const safeName = student.full_name.replace(/\s+/g, "_");
-      const safePeriod = report.period_label.replace(/\s+/g, "_");
-      pdf.save(`MSA_Laporan_${safeName}_${safePeriod}.pdf`);
+      const safeName = cleanText(student.full_name).replace(/\s+/g, "_");
+      const safePeriod = cleanText(report.period_label).replace(/\s+/g, "_");
+      pdf.save(`MSA_Report_${safeName}_${safePeriod}.pdf`);
 
       setState("done");
       setTimeout(() => setState("idle"), 4000);
@@ -596,26 +632,26 @@ export default function PDFDownloadButton({ report, student, entries }: Props) {
   const buttonContent = {
     idle: (
       <>
-        <Download className="w-4 h-4" />
-        Download Laporan PDF
+        <Download className="h-4 w-4" />
+        Download PDF Report
       </>
     ),
     generating: (
       <>
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Membuat PDF... Harap tunggu
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Creating premium report...
       </>
     ),
     done: (
       <>
-        <CheckCircle className="w-4 h-4" />
-        PDF Berhasil! ✓
+        <CheckCircle className="h-4 w-4" />
+        PDF ready
       </>
     ),
     error: (
       <>
-        <FileText className="w-4 h-4" />
-        Gagal — Coba Lagi
+        <FileText className="h-4 w-4" />
+        Try again
       </>
     ),
   };
@@ -625,13 +661,13 @@ export default function PDFDownloadButton({ report, student, entries }: Props) {
       <button
         onClick={generatePDF}
         disabled={state === "generating"}
-        className={`w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all duration-200 ${buttonClass[state]}`}
+        className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${buttonClass[state]}`}
       >
         {buttonContent[state]}
       </button>
       {state === "idle" && (
-        <p className="text-[10px] text-slate-400 text-center">
-          Format PDF profesional • 4 halaman lengkap • Bisa langsung dicetak
+        <p className="text-center text-[10px] text-slate-400">
+          Bilingual layout, learning rubric, student photo, and activity evidence included.
         </p>
       )}
     </div>

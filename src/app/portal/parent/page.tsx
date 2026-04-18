@@ -226,8 +226,18 @@ export default function ParentDashboard() {
           className="bg-gradient-to-r from-sky-500 to-indigo-600 rounded-2xl p-6 text-white shadow-xl"
         >
           <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center text-3xl font-bold border-2 border-white/30 shrink-0">
-              {child.nickname?.charAt(0) || child.full_name.charAt(0)}
+            <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center text-3xl font-bold border-2 border-white/30 shrink-0 overflow-hidden relative">
+              {child.photo_url ? (
+                <Image
+                  src={child.photo_url}
+                  alt={`Foto ${child.full_name}`}
+                  fill
+                  className="object-cover"
+                  sizes="80px"
+                />
+              ) : (
+                child.nickname?.charAt(0) || child.full_name.charAt(0)
+              )}
             </div>
             <div className="flex-1">
               <h2 className="text-xl font-bold">{child.full_name}</h2>
