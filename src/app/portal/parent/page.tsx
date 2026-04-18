@@ -595,7 +595,7 @@ export default function ParentDashboard() {
             </div>
           ) : (
             <div className="grid gap-4">
-              {reports.map((report) => {
+              {reports.map((report, reportIndex) => {
                 const avg =
                   Object.values(report.consolidated_scores || {}).reduce(
                     (a: number, b: unknown) => a + ((b as number) || 0),
@@ -711,6 +711,7 @@ export default function ParentDashboard() {
                             report={report}
                             student={child!}
                             entries={reportEntries}
+                            reportNumber={reports.length - reportIndex}
                           />
                         ) : (
                           <button
