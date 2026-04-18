@@ -37,6 +37,8 @@ const COLORS = {
   indigo: [99, 102, 241] as const,
 };
 
+let activeLogoData: string | null = null;
+
 const FRAMEWORKS = [
   "IB PYP: inquiry + ATL skills",
   "Montessori: independence + practical life",
@@ -160,6 +162,42 @@ const imageToDataUrl = async (src?: string | null): Promise<string | null> => {
   }
 };
 
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return window.btoa(binary);
+};
+
+const registerMontserrat = async (pdf: JsPDFDoc) => {
+  if (typeof window === "undefined") return;
+
+  try {
+    const fonts = [
+      { file: "Montserrat-Regular.ttf", style: "normal" },
+      { file: "Montserrat-SemiBold.ttf", style: "semibold" },
+      { file: "Montserrat-Bold.ttf", style: "bold" },
+    ];
+
+    await Promise.all(
+      fonts.map(async (font) => {
+        const response = await fetch(`/fonts/${font.file}`);
+        if (!response.ok) throw new Error(`Font not found: ${font.file}`);
+        const base64 = arrayBufferToBase64(await response.arrayBuffer());
+        pdf.addFileToVFS(font.file, base64);
+        pdf.addFont(font.file, "Montserrat", font.style);
+      })
+    );
+
+    pdf.setFont("Montserrat", "normal");
+  } catch {
+    pdf.setFont("helvetica", "normal");
+  }
+};
+
 const averageScore5 = (report: MonthlyReport) => {
   const scores = Object.values(report.consolidated_scores || {}).filter(
     (score): score is number => typeof score === "number"
@@ -202,16 +240,30 @@ const drawHeader = (
   setFill(pdf, COLORS.ink);
   pdf.rect(0, 0, PW, 20, "F");
   setFill(pdf, COLORS.sky);
-  pdf.rect(0, 0, 58, 20, "F");
+  pdf.rect(0, 0, 62, 20, "F");
+
+  setFill(pdf, COLORS.paper);
+  pdf.roundedRect(ML - 1, 4.3, 37, 11.5, 2, 2, "F");
+  if (activeLogoData) {
+    try {
+      pdf.addImage(activeLogoData, imageFormat(activeLogoData), ML + 1, 6.2, 32, 7.5);
+    } catch {
+      setText(pdf, COLORS.sky);
+      pdf.setFont("Montserrat", "bold");
+      pdf.setFontSize(7);
+      pdf.text("MSA Education", ML + 2, 11.5);
+    }
+  } else {
+    setText(pdf, COLORS.sky);
+    pdf.setFont("Montserrat", "bold");
+    pdf.setFontSize(7);
+    pdf.text("MSA Education", ML + 2, 11.5);
+  }
 
   setText(pdf, COLORS.paper);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(8.5);
-  pdf.text("MSA Education", ML, 12);
-
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7.2);
-  pdf.text(cleanText(title), ML + 48, 12);
+  pdf.text(cleanText(title), ML + 52, 12);
   pdf.text(`${code} | ${cleanText(student.full_name)} | ${cleanText(report.period_label)}`, PW - MR, 12, {
     align: "right",
   });
@@ -225,7 +277,7 @@ const drawFooter = (pdf: JsPDFDoc, code: string) => {
     pdf.setLineWidth(0.25);
     pdf.line(ML, PH - 14, PW - MR, PH - 14);
     setText(pdf, COLORS.muted);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(6.8);
     pdf.text("MSA Education - Student Learning Portfolio Report - Print ready A4", ML, PH - 7);
     pdf.text(`${code} - Page ${page}/${total}`, PW - MR, PH - 7, { align: "right" });
@@ -256,7 +308,7 @@ const drawPhoto = (
 
   if (!dataUrl) {
     setText(pdf, COLORS.sky);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(20);
     pdf.text(cleanText(fallback).slice(0, 1).toUpperCase(), x + w / 2, y + h / 2 + 5, {
       align: "center",
@@ -305,10 +357,10 @@ const drawMetricBox = (
   setFill(pdf, color);
   pdf.roundedRect(x, y, w, 18, 3, 3, "F");
   setText(pdf, COLORS.paper);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(13);
   pdf.text(value, x + w / 2, y + 8, { align: "center" });
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(6);
   pdf.text(label, x + w / 2, y + 14, { align: "center" });
 };
@@ -328,30 +380,30 @@ const drawCover = (
   pdf.roundedRect(ML, 33, 4, 39, 2, 2, "F");
 
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(19);
   pdf.text("Comprehensive Learning Progress Report", ML + 10, 48);
   pdf.setFontSize(9);
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.text("Bilingual portfolio, 10-star rubric, daily evidence, and next-step learning plan.", ML + 10, 58);
   setText(pdf, COLORS.sky);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(8);
   pdf.text(code, PW - MR - 1, 47, { align: "right" });
   setText(pdf, COLORS.muted);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7);
   pdf.text(`Generated: ${safeDate(new Date().toISOString())}`, PW - MR - 1, 56, { align: "right" });
 
   drawPhoto(pdf, studentPhoto, ML, 84, 50, 50, student.nickname || student.full_name);
 
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(18);
   pdf.text(cleanText(student.full_name), ML + 60, 94);
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(8.2);
   pdf.text(`Nickname: ${cleanText(student.nickname || "-")}`, ML + 60, 103);
   pdf.text(`Level: ${cleanText(student.grade_level)}`, ML + 60, 110);
@@ -365,7 +417,7 @@ const drawCover = (
 
   let y = 154;
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(10.5);
   pdf.text("Overall 10-Star Growth Rating", ML, y);
   drawTenStars(pdf, ML, y + 12, avg10, 2.4);
@@ -377,11 +429,11 @@ const drawCover = (
   setFill(pdf, COLORS.panel);
   pdf.roundedRect(ML, y, CW, 34, 4, 4, "F");
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(9);
   pdf.text("Assessment Scale", ML + 6, y + 9);
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7.2);
   const scale = [
     "1-2 Emerging: needs consistent guidance",
@@ -394,7 +446,7 @@ const drawCover = (
 
   y += 49;
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(9.5);
   pdf.text("Framework References Used", ML, y);
   y += 8;
@@ -404,7 +456,7 @@ const drawCover = (
     setFill(pdf, index % 2 ? [236, 253, 245] : [239, 246, 255]);
     pdf.roundedRect(x, rowY, 84, 9, 3, 3, "F");
     setText(pdf, index % 2 ? COLORS.teal : COLORS.sky);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(6.4);
     pdf.text(cleanText(item), x + 4, rowY + 5.8);
   });
@@ -434,13 +486,13 @@ const narrativeBlock = (
   pdf.line(ML + colW + gap / 2, y + 7, ML + colW + gap / 2, y + height - 7);
 
   setText(pdf, color);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(8.3);
   pdf.text(titleID, ML + 8, y + 8.5);
   pdf.text(titleEN, ML + 8 + colW + gap, y + 8.5);
 
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7.6);
   pdf.text(left, ML + 8, y + 17);
   setText(pdf, COLORS.slate);
@@ -454,12 +506,12 @@ const drawNarrative = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, c
 
   let y = 33;
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(14);
   pdf.text("Executive Summary / Ringkasan Utama", ML, y);
   y += 9;
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7.5);
   pdf.text(
     split(
@@ -502,7 +554,7 @@ const drawDomainCard = (
   pdf.roundedRect(x, y, w, 10, 4, 4, "F");
 
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(8);
   pdf.text(cleanText(category.label_id), x + 5, y + 6.5);
   setText(pdf, COLORS.sky);
@@ -511,18 +563,18 @@ const drawDomainCard = (
   drawTenStars(pdf, x + 5, y + 15.5, score, 1.35);
 
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(6.3);
   pdf.text(split(pdf, details.focus, w - 10).slice(0, 1), x + 5, y + 23);
 
   const subskillText = details.subskills.join(" | ");
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(5.9);
   pdf.text(split(pdf, subskillText, w - 10).slice(0, 2), x + 5, y + 29);
 
   setText(pdf, COLORS.muted);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(5.7);
   pdf.text(split(pdf, `Evidence: ${details.evidence}`, w - 10).slice(0, 2), x + 5, y + 35.5);
 };
@@ -537,11 +589,11 @@ const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyRep
 
     let y = 33;
     setText(pdf, COLORS.ink);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(13);
     pdf.text(pageIndex === 0 ? "10-Star Development Rubric" : "Detailed Development Rubric", ML, y);
     setText(pdf, COLORS.slate);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(7.2);
     pdf.text("Each domain combines teacher observation, activity evidence, learning behavior, and monthly consistency.", ML, y + 8);
     y += 20;
@@ -554,11 +606,11 @@ const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyRep
     setFill(pdf, [255, 251, 235]);
     pdf.roundedRect(ML, PH - 39, CW, 18, 3, 3, "F");
     setText(pdf, COLORS.amber);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(7.5);
     pdf.text("Interpretation note", ML + 5, PH - 31);
     setText(pdf, COLORS.slate);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(6.5);
     pdf.text(
       split(
@@ -585,12 +637,12 @@ const drawEvidence = (
 
   let y = 32;
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(13);
   pdf.text("Daily Evidence Portfolio", ML, y);
   y += 8;
   setText(pdf, COLORS.slate);
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont("Montserrat", "normal");
   pdf.setFontSize(7.2);
   pdf.text("Selected session evidence with activity photos, teacher observation, mood, and next learning cue.", ML, y);
   y += 12;
@@ -622,12 +674,12 @@ const drawEvidence = (
 
     const x = ML + 53;
     setText(pdf, COLORS.ink);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(8.6);
     pdf.text(`#${entry.meeting_number} ${cleanText(entry.session_title)}`, x, y + 9);
 
     setText(pdf, COLORS.muted);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(6.5);
     pdf.text(`${safeDate(entry.entry_date)} | Mood: ${toTitle(entry.mood.replace("_", " "))} | Score: ${score10(entry.overall_stars || 0)}/10`, x, y + 16);
 
@@ -645,7 +697,7 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
 
   let y = 35;
   setText(pdf, COLORS.ink);
-  pdf.setFont("helvetica", "bold");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(13);
   pdf.text("30-Day Parent Support Plan", ML, y);
   y += 12;
@@ -679,11 +731,11 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
     setFill(pdf, plan.color);
     pdf.roundedRect(ML, y, 3, 24, 1.5, 1.5, "F");
     setText(pdf, plan.color);
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.setFontSize(8.4);
     pdf.text(plan.title, ML + 8, y + 8);
     setText(pdf, COLORS.slate);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(7);
     pdf.text(split(pdf, plan.body, CW - 16), ML + 8, y + 16);
     y += 31;
@@ -693,7 +745,7 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
   setFill(pdf, [240, 249, 255]);
   pdf.roundedRect(ML, y, CW, 28, 4, 4, "F");
   setText(pdf, COLORS.sky);
-  pdf.setFont("helvetica", "bolditalic");
+  pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(10);
   pdf.text("Every child learns at their own rhythm.", PW / 2, y + 11, { align: "center" });
   pdf.text("A strong report should guide the next step, not just record the past.", PW / 2, y + 20, {
@@ -711,13 +763,13 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
     setStroke(pdf, COLORS.line);
     pdf.roundedRect(item.x, y, sigW, 45, 4, 4, "S");
     setText(pdf, COLORS.slate);
-    pdf.setFont("helvetica", "normal");
+    pdf.setFont("Montserrat", "normal");
     pdf.setFontSize(7.5);
     pdf.text(item.title, item.x + sigW / 2, y + 10, { align: "center" });
     setStroke(pdf, [203, 213, 225]);
     pdf.line(item.x + 16, y + 25, item.x + sigW - 16, y + 25);
     pdf.text(item.role, item.x + sigW / 2, y + 35, { align: "center" });
-    pdf.setFont("helvetica", "bold");
+    pdf.setFont("Montserrat", "bold");
     pdf.text(cleanText(item.name), item.x + sigW / 2, y + 41, { align: "center" });
   });
 };
@@ -730,12 +782,15 @@ export default function PDFDownloadButton({ report, student, entries, reportNumb
     try {
       const { jsPDF } = await import("jspdf");
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      await registerMontserrat(pdf);
       const code = reportCode(student, report, reportNumber);
       const activityUrls = entries.flatMap((entry) => entry.photo_urls || []).slice(0, 12);
-      const [studentPhoto, ...activityPhotos] = await Promise.all([
+      const [logoData, studentPhoto, ...activityPhotos] = await Promise.all([
+        imageToDataUrl("/images/logo-full.png"),
         imageToDataUrl(student.photo_url),
         ...activityUrls.map((url) => imageToDataUrl(url)),
       ]);
+      activeLogoData = logoData;
 
       drawCover(pdf, student, report, code, studentPhoto);
       drawNarrative(pdf, student, report, code);

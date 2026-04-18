@@ -1,21 +1,45 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, Student } from "@/lib/supabase/types";
+import type { Profile, Student, StudentGrade } from "@/lib/supabase/types";
 import {
-  Users,
-  GraduationCap,
   BookOpen,
+  Camera,
+  CheckCircle,
   FileText,
-  UserPlus,
-  TrendingUp,
+  GraduationCap,
+  Loader2,
   Shield,
+  TrendingUp,
+  Upload,
+  UserPlus,
+  Users,
   X,
 } from "lucide-react";
 
+type Message = { type: "ok" | "err"; text: string } | null;
+
+const GRADES: StudentGrade[] = [
+  "Toddler",
+  "TK-A",
+  "TK-B",
+  "SD-1",
+  "SD-2",
+  "SD-3",
+  "SD-4",
+  "SD-5",
+  "SD-6",
+];
+
+const inputClass =
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+
 export default function AdminDashboard() {
+  const supabase = useMemo(() => createClient(), []);
+
   const [teachers, setTeachers] = useState<Profile[]>([]);
   const [parents, setParents] = useState<Profile[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -23,7 +47,6 @@ export default function AdminDashboard() {
   const [totalReports, setTotalReports] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Add User Modal
   const [showAddUser, setShowAddUser] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -31,39 +54,137 @@ export default function AdminDashboard() {
   const [newWhatsapp, setNewWhatsapp] = useState("");
   const [newRole, setNewRole] = useState<"teacher" | "parent">("teacher");
   const [addingUser, setAddingUser] = useState(false);
-  const [addMessage, setAddMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [addUserMessage, setAddUserMessage] = useState<Message>(null);
 
-  const supabase = createClient();
+  const [showAddStudent, setShowAddStudent] = useState(false);
+  const [studentName, setStudentName] = useState("");
+  const [studentNickname, setStudentNickname] = useState("");
+  const [studentBirthDate, setStudentBirthDate] = useState("");
+  const [studentGrade, setStudentGrade] = useState<StudentGrade>("TK-A");
+  const [studentTeacherId, setStudentTeacherId] = useState("");
+  const [studentParentId, setStudentParentId] = useState("");
+  const [studentPhotoUrl, setStudentPhotoUrl] = useState("");
+  const [studentPhotoFile, setStudentPhotoFile] = useState<File | null>(null);
+  const [addingStudent, setAddingStudent] = useState(false);
+  const [addStudentMessage, setAddStudentMessage] = useState<Message>(null);
+
+  const teacherMap = useMemo(
+    () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
+    [teachers]
+  );
+  const parentMap = useMemo(
+    () => new Map(parents.map((parent) => [parent.id, parent])),
+    [parents]
+  );
+
+  const loadData = async () => {
+    const [{ data: t }, { data: p }, { data: s }, { count: ec }, { count: rc }] =
+      await Promise.all([
+        supabase.from("profiles").select("*").eq("role", "teacher").order("full_name"),
+        supabase.from("profiles").select("*").eq("role", "parent").order("full_name"),
+        supabase.from("students").select("*").eq("is_active", true).order("full_name"),
+        supabase.from("daily_entries").select("*", { count: "exact", head: true }),
+        supabase.from("monthly_reports").select("*", { count: "exact", head: true }),
+      ]);
+
+    setTeachers((t || []) as Profile[]);
+    setParents((p || []) as Profile[]);
+    setStudents((s || []) as Student[]);
+    setTotalEntries(ec || 0);
+    setTotalReports(rc || 0);
+
+    if (t?.[0] && !studentTeacherId) setStudentTeacherId(t[0].id);
+    if (p?.[0] && !studentParentId) setStudentParentId(p[0].id);
+    setLoading(false);
+  };
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = async () => {
-    const { data: t } = await supabase.from("profiles").select("*").eq("role", "teacher");
-    const { data: p } = await supabase.from("profiles").select("*").eq("role", "parent");
-    const { data: s } = await supabase.from("students").select("*").eq("is_active", true);
-    const { count: ec } = await supabase.from("daily_entries").select("*", { count: "exact", head: true });
-    const { count: rc } = await supabase.from("monthly_reports").select("*", { count: "exact", head: true });
+  const resetStudentForm = () => {
+    setStudentName("");
+    setStudentNickname("");
+    setStudentBirthDate("");
+    setStudentGrade("TK-A");
+    setStudentPhotoUrl("");
+    setStudentPhotoFile(null);
+    setAddStudentMessage(null);
+    if (teachers[0]) setStudentTeacherId(teachers[0].id);
+    if (parents[0]) setStudentParentId(parents[0].id);
+  };
 
-    if (t) setTeachers(t as Profile[]);
-    if (p) setParents(p as Profile[]);
-    if (s) setStudents(s as Student[]);
-    setTotalEntries(ec || 0);
-    setTotalReports(rc || 0);
-    setLoading(false);
+  const uploadStudentPhoto = async () => {
+    if (!studentPhotoFile) return studentPhotoUrl.trim() || null;
+
+    const safeName = studentPhotoFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+    const filePath = `students/${Date.now()}-${safeName}`;
+    const { error } = await supabase.storage
+      .from("learning-photos")
+      .upload(filePath, studentPhotoFile, { upsert: false });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage.from("learning-photos").getPublicUrl(filePath);
+    return data.publicUrl;
+  };
+
+  const handleAddStudent = async () => {
+    if (!studentName.trim()) {
+      setAddStudentMessage({ type: "err", text: "Nama anak wajib diisi" });
+      return;
+    }
+    if (!studentTeacherId) {
+      setAddStudentMessage({ type: "err", text: "Pilih guru pendamping dulu" });
+      return;
+    }
+    if (!studentParentId) {
+      setAddStudentMessage({ type: "err", text: "Pilih akun orang tua/wali dulu" });
+      return;
+    }
+
+    setAddingStudent(true);
+    setAddStudentMessage(null);
+
+    try {
+      const photoUrl = await uploadStudentPhoto();
+      const { error } = await supabase.from("students").insert({
+        full_name: studentName.trim(),
+        nickname: studentNickname.trim() || null,
+        date_of_birth: studentBirthDate || null,
+        grade_level: studentGrade,
+        photo_url: photoUrl,
+        teacher_id: studentTeacherId,
+        parent_id: studentParentId,
+        is_active: true,
+      });
+
+      if (error) throw error;
+
+      setAddStudentMessage({ type: "ok", text: "Murid baru berhasil ditambahkan dan tersambung ke guru + parent." });
+      resetStudentForm();
+      await loadData();
+    } catch (error) {
+      setAddStudentMessage({
+        type: "err",
+        text: error instanceof Error ? error.message : "Gagal menambahkan murid",
+      });
+    } finally {
+      setAddingStudent(false);
+    }
   };
 
   const handleAddUser = async () => {
     if (!newName || !newEmail || !newPassword) {
-      setAddMessage({ type: "err", text: "Nama, email, dan password harus diisi" });
+      setAddUserMessage({ type: "err", text: "Nama, email, dan password harus diisi" });
       return;
     }
+
     setAddingUser(true);
-    setAddMessage(null);
+    setAddUserMessage(null);
 
     try {
-      // Use Supabase admin API to create users (via edge function or directly)
       const { data, error } = await supabase.auth.signUp({
         email: newEmail,
         password: newPassword,
@@ -72,14 +193,9 @@ export default function AdminDashboard() {
         },
       });
 
-      if (error) {
-        setAddMessage({ type: "err", text: error.message });
-        setAddingUser(false);
-        return;
-      }
+      if (error) throw error;
 
       if (data.user) {
-        // Upsert profile
         await supabase.from("profiles").upsert({
           id: data.user.id,
           role: newRole,
@@ -88,191 +204,335 @@ export default function AdminDashboard() {
           whatsapp: newWhatsapp || null,
         });
 
-        setAddMessage({ type: "ok", text: `Akun ${newRole} berhasil dibuat!` });
+        setAddUserMessage({ type: "ok", text: `Akun ${newRole} berhasil dibuat.` });
         setNewName("");
         setNewEmail("");
         setNewPassword("");
         setNewWhatsapp("");
-        loadData();
+        await loadData();
       }
-    } catch {
-      setAddMessage({ type: "err", text: "Gagal membuat akun" });
+    } catch (error) {
+      setAddUserMessage({
+        type: "err",
+        text: error instanceof Error ? error.message : "Gagal membuat akun",
+      });
+    } finally {
+      setAddingUser(false);
     }
-    setAddingUser(false);
   };
 
   const stats = [
-    { label: "Total Guru", value: teachers.length, icon: <GraduationCap className="w-5 h-5" />, color: "from-sky-500 to-blue-600", bg: "bg-sky-50 dark:bg-sky-900/20" },
-    { label: "Total Murid", value: students.length, icon: <Users className="w-5 h-5" />, color: "from-emerald-500 to-teal-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
-    { label: "Total Orang Tua", value: parents.length, icon: <UserPlus className="w-5 h-5" />, color: "from-purple-500 to-indigo-600", bg: "bg-purple-50 dark:bg-purple-900/20" },
-    { label: "Total Entri", value: totalEntries, icon: <BookOpen className="w-5 h-5" />, color: "from-amber-500 to-orange-600", bg: "bg-amber-50 dark:bg-amber-900/20" },
-    { label: "Total Laporan", value: totalReports, icon: <FileText className="w-5 h-5" />, color: "from-rose-500 to-pink-600", bg: "bg-rose-50 dark:bg-rose-900/20" },
-    { label: "Tingkat Aktivitas", value: totalEntries > 0 ? "Aktif" : "—", icon: <TrendingUp className="w-5 h-5" />, color: "from-teal-500 to-cyan-600", bg: "bg-teal-50 dark:bg-teal-900/20" },
+    { label: "Total Guru", value: teachers.length, icon: GraduationCap, color: "from-sky-500 to-cyan-500", bg: "bg-sky-50 dark:bg-sky-900/20" },
+    { label: "Total Murid", value: students.length, icon: Users, color: "from-emerald-500 to-teal-500", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
+    { label: "Total Orang Tua", value: parents.length, icon: UserPlus, color: "from-indigo-500 to-sky-500", bg: "bg-indigo-50 dark:bg-indigo-900/20" },
+    { label: "Total Entri", value: totalEntries, icon: BookOpen, color: "from-amber-500 to-yellow-500", bg: "bg-amber-50 dark:bg-amber-900/20" },
+    { label: "Total Laporan", value: totalReports, icon: FileText, color: "from-rose-500 to-pink-500", bg: "bg-rose-50 dark:bg-rose-900/20" },
+    { label: "Tingkat Aktivitas", value: totalEntries > 0 ? "Aktif" : "-", icon: TrendingUp, color: "from-teal-500 to-emerald-500", bg: "bg-teal-50 dark:bg-teal-900/20" },
   ];
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-3 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-sky-200 border-t-sky-500" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="mx-auto max-w-7xl space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <Shield className="w-7 h-7 text-indigo-500" />
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-800 dark:text-white sm:text-3xl">
+            <Shield className="h-7 w-7 text-sky-500" />
             Panel Admin
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Kelola guru, murid, dan orang tua
+          <p className="mt-1 text-slate-500 dark:text-slate-400">
+            Kelola akun, murid, guru pendamping, dan koneksi parent.
           </p>
         </div>
-        <button
-          onClick={() => setShowAddUser(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold rounded-xl shadow-lg transition-all text-sm"
-        >
-          <UserPlus className="w-4 h-4" />
-          Tambah Akun
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        {stats.map((s, i) => (
-          <motion.div
-            key={s.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-            className={`${s.bg} rounded-2xl p-5 border border-slate-100 dark:border-slate-800`}
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button
+            onClick={() => setShowAddStudent(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-teal-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-200 transition hover:from-sky-600 hover:to-teal-600 dark:shadow-none"
           >
-            <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.color} flex items-center justify-center text-white mb-3`}>
-              {s.icon}
-            </div>
-            <p className="text-2xl font-bold text-slate-800 dark:text-white">{s.value}</p>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{s.label}</p>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Teachers */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-sky-500" /> Daftar Guru
-            </h2>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {teachers.map((t) => (
-              <div key={t.id} className="p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center text-white font-bold text-sm">
-                  {t.full_name.charAt(0)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-800 dark:text-white truncate">{t.full_name}</p>
-                  <p className="text-xs text-slate-400 truncate">{t.email}</p>
-                </div>
-              </div>
-            ))}
-            {teachers.length === 0 && (
-              <p className="p-6 text-center text-sm text-slate-400">Belum ada guru</p>
-            )}
-          </div>
-        </div>
-
-        {/* Students */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-emerald-500" /> Daftar Murid
-            </h2>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {students.map((s) => (
-              <div key={s.id} className="p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold text-sm">
-                  {s.nickname?.charAt(0) || s.full_name.charAt(0)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-800 dark:text-white truncate">{s.full_name}</p>
-                  <p className="text-xs text-slate-400">{s.grade_level} • {s.nickname}</p>
-                </div>
-              </div>
-            ))}
-            {students.length === 0 && (
-              <p className="p-6 text-center text-sm text-slate-400">Belum ada murid</p>
-            )}
-          </div>
+            <Users className="h-4 w-4" />
+            Tambah Murid
+          </button>
+          <button
+            onClick={() => setShowAddUser(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+          >
+            <UserPlus className="h-4 w-4" />
+            Tambah Akun
+          </button>
         </div>
       </div>
 
-      {/* Add User Modal */}
-      {showAddUser && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowAddUser(false)}>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+        {stats.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <motion.div
+              key={item.label}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.05 }}
+              className={`${item.bg} rounded-2xl border border-slate-100 p-5 dark:border-slate-800`}
+            >
+              <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${item.color} text-white`}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <p className="text-2xl font-bold text-slate-800 dark:text-white">{item.value}</p>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{item.label}</p>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="border-b border-slate-100 p-5 dark:border-slate-800">
+            <h2 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
+              <GraduationCap className="h-5 w-5 text-sky-500" />
+              Daftar Guru
+            </h2>
+          </div>
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {teachers.map((teacher) => (
+              <div key={teacher.id} className="flex items-center gap-3 p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-cyan-500 text-sm font-bold text-white">
+                  {teacher.full_name.charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{teacher.full_name}</p>
+                  <p className="truncate text-xs text-slate-400">{teacher.email}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+            <h2 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
+              <Users className="h-5 w-5 text-emerald-500" />
+              Daftar Murid
+            </h2>
+            <button
+              onClick={() => setShowAddStudent(true)}
+              className="rounded-lg bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-600 hover:bg-sky-100"
+            >
+              Tambah
+            </button>
+          </div>
+          <div className="max-h-[520px] divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+            {students.map((student) => (
+              <div key={student.id} className="flex items-center gap-3 p-4">
+                <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-sky-100">
+                  {student.photo_url ? (
+                    <Image src={student.photo_url} alt={`Foto ${student.full_name}`} fill className="object-cover" sizes="44px" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center font-bold text-sky-600">
+                      {student.nickname?.charAt(0) || student.full_name.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{student.full_name}</p>
+                  <p className="truncate text-xs text-slate-400">
+                    {student.grade_level} | Guru: {teacherMap.get(student.teacher_id)?.full_name || "-"} | Parent:{" "}
+                    {student.parent_id ? parentMap.get(student.parent_id)?.full_name || "-" : "-"}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {students.length === 0 && <p className="p-6 text-center text-sm text-slate-400">Belum ada murid</p>}
+          </div>
+        </section>
+      </div>
+
+      {showAddStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAddStudent(false)}>
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5"
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            onClick={(event) => event.stopPropagation()}
+            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-white">
-                Tambah Akun Baru
-              </h3>
-              <button onClick={() => setShowAddUser(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800 dark:text-white">Tambah Murid Baru</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Hubungkan anak ke guru pendamping dan akun orang tua supaya portal langsung sinkron.
+                </p>
+              </div>
+              <button onClick={() => setShowAddStudent(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            {addMessage && (
-              <div className={`p-3 rounded-xl text-sm ${addMessage.type === "ok" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300" : "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300"}`}>
-                {addMessage.text}
+            {addStudentMessage && (
+              <div
+                className={`mb-4 flex items-center gap-2 rounded-lg p-3 text-sm ${
+                  addStudentMessage.type === "ok"
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-rose-50 text-rose-700"
+                }`}
+              >
+                {addStudentMessage.type === "ok" ? <CheckCircle className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                {addStudentMessage.text}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Nama Lengkap Anak *</label>
+                <input value={studentName} onChange={(event) => setStudentName(event.target.value)} className={inputClass} placeholder="Contoh: Alya Cindera" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Nama Panggilan</label>
+                <input value={studentNickname} onChange={(event) => setStudentNickname(event.target.value)} className={inputClass} placeholder="Contoh: Alya" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Tanggal Lahir</label>
+                <input type="date" value={studentBirthDate} onChange={(event) => setStudentBirthDate(event.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Jenjang *</label>
+                <select value={studentGrade} onChange={(event) => setStudentGrade(event.target.value as StudentGrade)} className={inputClass}>
+                  {GRADES.map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Guru Pendamping *</label>
+                <select value={studentTeacherId} onChange={(event) => setStudentTeacherId(event.target.value)} className={inputClass}>
+                  <option value="">Pilih guru</option>
+                  {teachers.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Orang Tua / Wali *</label>
+                <select value={studentParentId} onChange={(event) => setStudentParentId(event.target.value)} className={inputClass}>
+                  <option value="">Pilih parent</option>
+                  {parents.map((parent) => (
+                    <option key={parent.id} value={parent.id}>
+                      {parent.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Upload Foto Real Anak</label>
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sky-300 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-600 hover:bg-sky-100">
+                  <Upload className="h-4 w-4" />
+                  {studentPhotoFile ? studentPhotoFile.name : "Pilih foto"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => setStudentPhotoFile(event.target.files?.[0] || null)}
+                  />
+                </label>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Atau URL Foto</label>
+                <input
+                  value={studentPhotoUrl}
+                  onChange={(event) => setStudentPhotoUrl(event.target.value)}
+                  className={inputClass}
+                  placeholder="https://... atau /images/..."
+                />
+              </div>
+              <div className="sm:col-span-2 rounded-lg bg-slate-50 p-4 text-xs text-slate-500">
+                <div className="mb-1 flex items-center gap-2 font-semibold text-slate-700">
+                  <Camera className="h-4 w-4 text-sky-500" />
+                  Catatan foto
+                </div>
+                Untuk foto realistis, upload foto asli/sample dari lo. Sistem akan menyimpan ke Supabase Storage lalu dipakai di dashboard parent dan PDF report.
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <button
+                onClick={() => {
+                  resetStudentForm();
+                  setShowAddStudent(false);
+                }}
+                className="rounded-lg border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 sm:flex-1"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleAddStudent}
+                disabled={addingStudent}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-teal-500 px-4 py-3 text-sm font-semibold text-white hover:from-sky-600 hover:to-teal-600 disabled:opacity-60 sm:flex-[2]"
+              >
+                {addingStudent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+                Simpan Murid Baru
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {showAddUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAddUser(false)}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md space-y-5 rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800 dark:text-white">Tambah Akun Baru</h3>
+              <button onClick={() => setShowAddUser(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {addUserMessage && (
+              <div className={`rounded-lg p-3 text-sm ${addUserMessage.type === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {addUserMessage.text}
               </div>
             )}
 
             <div className="space-y-4">
               <div className="flex gap-2">
-                {(["teacher", "parent"] as const).map((r) => (
+                {(["teacher", "parent"] as const).map((role) => (
                   <button
-                    key={r}
-                    onClick={() => setNewRole(r)}
-                    className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${
-                      newRole === r
-                        ? r === "teacher"
-                          ? "border-sky-400 bg-sky-50 dark:bg-sky-900/20 text-sky-600"
-                          : "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600"
-                        : "border-slate-200 dark:border-slate-700 text-slate-400"
+                    key={role}
+                    onClick={() => setNewRole(role)}
+                    className={`flex-1 rounded-lg border-2 py-2 text-sm font-medium transition ${
+                      newRole === role
+                        ? "border-sky-400 bg-sky-50 text-sky-600"
+                        : "border-slate-200 text-slate-400"
                     }`}
                   >
-                    {r === "teacher" ? "👩‍🏫 Guru" : "👨‍👩‍👧 Orang Tua"}
+                    {role === "teacher" ? "Guru" : "Orang Tua"}
                   </button>
                 ))}
               </div>
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nama Lengkap *" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-sky-400" />
-              <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Email *" type="email" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-sky-400" />
-              <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Password *" type="password" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-sky-400" />
-              <input value={newWhatsapp} onChange={(e) => setNewWhatsapp(e.target.value)} placeholder="Nomor WhatsApp (opsional)" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-sky-400" />
+              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Nama Lengkap *" className={inputClass} />
+              <input value={newEmail} onChange={(event) => setNewEmail(event.target.value)} placeholder="Email *" type="email" className={inputClass} />
+              <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Password *" type="password" className={inputClass} />
+              <input value={newWhatsapp} onChange={(event) => setNewWhatsapp(event.target.value)} placeholder="Nomor WhatsApp (opsional)" className={inputClass} />
             </div>
 
             <button
               onClick={handleAddUser}
               disabled={addingUser}
-              className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-teal-500 py-3 font-semibold text-white disabled:opacity-60"
             >
-              {addingUser ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <>
-                  <UserPlus className="w-4 h-4" />
-                  Buat Akun {newRole === "teacher" ? "Guru" : "Orang Tua"}
-                </>
-              )}
+              {addingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+              Buat Akun {newRole === "teacher" ? "Guru" : "Orang Tua"}
             </button>
           </motion.div>
         </div>

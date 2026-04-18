@@ -145,6 +145,14 @@ export default function Navbar() {
                 )
               )}
               <div className="pt-3 border-t border-slate-100">
+                <Link
+                  href="/portal/login"
+                  onClick={() => setIsOpen(false)}
+                  className="mb-2 flex w-full items-center justify-center gap-2 rounded-[var(--radius-button)] border border-sky-200 bg-sky-50 px-5 py-3 text-base font-semibold text-sky-700 transition-colors hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-900/20 dark:text-sky-300"
+                >
+                  <GraduationCap className="h-5 w-5" />
+                  Portal
+                </Link>
                 <a
                   href={getWhatsAppLink(`${t.contactInfo.whatsappTemplate}`)}
                   target="_blank"
