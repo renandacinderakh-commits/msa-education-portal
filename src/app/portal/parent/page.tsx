@@ -1,89 +1,92 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
-import Image from "next/image";
-import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
-import type { Student, DailyEntry, MonthlyReport } from "@/lib/supabase/types";
-import { SCORE_CATEGORIES } from "@/lib/supabase/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import Image from "next/image";
+import { usePathname } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
+import type { DailyEntry, MonthlyReport, Student } from "@/lib/supabase/types";
+import { SCORE_CATEGORIES } from "@/lib/supabase/types";
 import {
+  BarChart3,
   BookOpen,
-  Star,
   Calendar,
-  Download,
   ChevronDown,
   ChevronUp,
-  Smile,
-  Meh,
-  HeartHandshake,
-  TrendingUp,
+  Download,
   FileText,
-  Trophy,
-  Target,
+  HeartHandshake,
+  Meh,
   MessageCircle,
+  Smile,
   Sparkles,
+  Star,
+  Target,
+  TrendingUp,
+  Trophy,
 } from "lucide-react";
 
-// ✅ FIX: Dynamic import with proper loading fallback
-const PDFDownloadButton = dynamic(
-  () => import("@/components/portal/PDFDownloadButton"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="w-full h-10 bg-slate-100 dark:bg-slate-800 rounded-xl animate-pulse" />
-    ),
-  }
-);
+const PDFDownloadButton = dynamic(() => import("@/components/portal/PDFDownloadButton"), {
+  ssr: false,
+  loading: () => <div className="h-10 w-full animate-pulse rounded-lg bg-slate-100" />,
+});
+
+type TabKey = "overview" | "journal" | "reports" | "progress";
+
+const tabFromPath = (pathname: string): TabKey => {
+  if (pathname.endsWith("/journal")) return "journal";
+  if (pathname.endsWith("/reports")) return "reports";
+  return "overview";
+};
+
+const safeDate = (value?: string | null) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
 
 const MoodIcon = ({ mood }: { mood: string }) => {
-  if (mood === "happy")
-    return (
-      <span title="Senang & Bersemangat">
-        <Smile className="w-5 h-5 text-emerald-500" />
-      </span>
-    );
-  if (mood === "neutral")
-    return (
-      <span title="Cukup Baik">
-        <Meh className="w-5 h-5 text-amber-500" />
-      </span>
-    );
-  return (
-    <span title="Perlu Dukungan">
-      <HeartHandshake className="w-5 h-5 text-rose-500" />
-    </span>
-  );
+  if (mood === "happy") return <Smile className="h-5 w-5 text-emerald-500" />;
+  if (mood === "neutral") return <Meh className="h-5 w-5 text-amber-500" />;
+  return <HeartHandshake className="h-5 w-5 text-rose-500" />;
 };
 
-const MoodLabel = ({ mood }: { mood: string }) => {
-  const map: Record<string, { label: string; color: string }> = {
-    happy: { label: "Senang & Bersemangat 🌟", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400" },
-    neutral: { label: "Cukup Baik 😊", color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400" },
-    needs_support: { label: "Perlu Dukungan 💙", color: "text-rose-600 bg-rose-50 dark:bg-rose-900/20 dark:text-rose-400" },
-  };
-  const m = map[mood] || map.neutral;
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${m.color}`}>
-      {m.label}
-    </span>
-  );
+const scoreAverage = (entries: DailyEntry[]) => {
+  if (!entries.length) return 0;
+  return entries.reduce((sum, entry) => sum + (entry.overall_stars || 0), 0) / entries.length;
 };
+
+const getEntryScorePoints = (entries: DailyEntry[]) =>
+  entries
+    .slice(0, 10)
+    .reverse()
+    .map((entry, index) => ({
+      x: 18 + index * (154 / Math.max(entries.slice(0, 10).length - 1, 1)),
+      y: 82 - ((entry.overall_stars || 0) / 5) * 60,
+      entry,
+    }));
 
 export default function ParentDashboard() {
+  const supabase = useMemo(() => createClient(), []);
+  const pathname = usePathname();
   const [children, setChildren] = useState<Student[]>([]);
-  const [selectedChild, setSelectedChild] = useState<string>("");
+  const [selectedChild, setSelectedChild] = useState("");
   const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [reports, setReports] = useState<MonthlyReport[]>([]);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
-  // ✅ FIX: Separate state for PDF ready — was conflicting with entry expand
   const [pdfReadyId, setPdfReadyId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>(tabFromPath(pathname));
   const [loading, setLoading] = useState(true);
   const [entriesLoading, setEntriesLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"journal" | "reports" | "progress">("journal");
 
-  // ✅ FIX: Memoize supabase client
-  const supabase = useMemo(() => createClient(), []);
+  useEffect(() => {
+    setActiveTab(tabFromPath(pathname));
+  }, [pathname]);
 
   useEffect(() => {
     let mounted = true;
@@ -91,7 +94,10 @@ export default function ParentDashboard() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user) { setLoading(false); return; }
+      if (!user) {
+        setLoading(false);
+        return;
+      }
 
       const { data } = await supabase
         .from("students")
@@ -100,19 +106,19 @@ export default function ParentDashboard() {
         .eq("is_active", true)
         .order("full_name");
 
-      if (mounted) {
-        if (data && data.length > 0) {
-          setChildren(data as Student[]);
-          setSelectedChild(data[0].id);
-        }
-        setLoading(false);
-      }
+      if (!mounted) return;
+      const list = (data || []) as Student[];
+      setChildren(list);
+      if (list[0]) setSelectedChild(list[0].id);
+      setLoading(false);
     };
+
     loadChildren();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [supabase]);
 
-  // ✅ FIX: Proper cleanup and loading state for entries
   useEffect(() => {
     if (!selectedChild) return;
     let mounted = true;
@@ -135,20 +141,19 @@ export default function ParentDashboard() {
           .order("month", { ascending: false }),
       ]);
 
-      if (mounted) {
-        if (entryData) setEntries(entryData as DailyEntry[]);
-        if (reportData) setReports(reportData as MonthlyReport[]);
-        setEntriesLoading(false);
-      }
+      if (!mounted) return;
+      setEntries((entryData || []) as DailyEntry[]);
+      setReports((reportData || []) as MonthlyReport[]);
+      setEntriesLoading(false);
     };
+
     loadData();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [selectedChild, supabase]);
 
-  const child = useMemo(
-    () => children.find((c) => c.id === selectedChild),
-    [children, selectedChild]
-  );
+  const child = useMemo(() => children.find((item) => item.id === selectedChild), [children, selectedChild]);
 
   const handleChildChange = useCallback((id: string) => {
     setSelectedChild(id);
@@ -156,121 +161,105 @@ export default function ParentDashboard() {
     setPdfReadyId(null);
   }, []);
 
-  // Calculate stats
   const stats = useMemo(() => {
-    if (!entries.length) return { avgStars: 0, happyCount: 0, totalEntries: entries.length };
-    const avgStars =
-      entries.reduce((a, e) => a + (e.overall_stars || 0), 0) / entries.length;
-    const happyCount = entries.filter((e) => e.mood === "happy").length;
+    const avgStars = scoreAverage(entries);
+    const happyCount = entries.filter((entry) => entry.mood === "happy").length;
     return { avgStars, happyCount, totalEntries: entries.length };
   }, [entries]);
 
+  const progressPoints = useMemo(() => getEntryScorePoints(entries), [entries]);
+  const progressPath = progressPoints.map((point) => `${point.x},${point.y}`).join(" ");
+
+  const categoryAverages = useMemo(
+    () =>
+      SCORE_CATEGORIES.map((category) => {
+        const values = entries
+          .map((entry) => entry.scores?.[category.key] as number | undefined)
+          .filter((value): value is number => typeof value === "number");
+        return {
+          category,
+          avg: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0,
+        };
+      }).filter((item) => item.avg > 0),
+    [entries]
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-[3px] border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-sky-200 border-t-sky-500" />
       </div>
     );
   }
 
   if (children.length === 0) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20">
-        <div className="w-20 h-20 mx-auto bg-sky-50 dark:bg-sky-900/20 rounded-full flex items-center justify-center mb-4">
-          <BookOpen className="w-10 h-10 text-sky-300" />
+      <div className="mx-auto max-w-2xl py-20 text-center">
+        <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-sky-50">
+          <BookOpen className="h-10 w-10 text-sky-300" />
         </div>
-        <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
-          Belum Ada Data Anak
-        </h2>
-        <p className="text-slate-500 dark:text-slate-400">
-          Hubungi admin MSA Education untuk menghubungkan akun Anda dengan data
-          anak.
-        </p>
+        <h2 className="mb-2 text-xl font-bold text-slate-800">Belum Ada Data Anak</h2>
+        <p className="text-slate-500">Hubungi admin MSA Education untuk menghubungkan akun Anda dengan data anak.</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* ── Header + Child Selector ─────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-white">
-            Portal Orang Tua 📚
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Pantau perkembangan belajar anak Anda secara real-time
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">Portal Orang Tua</h1>
+          <p className="mt-1 text-slate-500">Pantau learning story, report, dan progress anak secara real-time.</p>
         </div>
         {children.length > 1 && (
           <select
             value={selectedChild}
-            onChange={(e) => handleChildChange(e.target.value)}
-            className="px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-800 dark:text-white focus:ring-2 focus:ring-sky-300 outline-none"
+            onChange={(event) => handleChildChange(event.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-sky-300"
           >
-            {children.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.full_name}
+            {children.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.full_name}
               </option>
             ))}
           </select>
         )}
       </div>
 
-      {/* ── Child Profile Card ──────────────────────────────────── */}
       {child && (
         <motion.div
           key={child.id}
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-sky-500 to-indigo-600 rounded-2xl p-6 text-white shadow-xl"
+          className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-600 p-5 text-white shadow-xl"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center text-3xl font-bold border-2 border-white/30 shrink-0 overflow-hidden relative">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl border-2 border-white/30 bg-white/20">
               {child.photo_url ? (
-                <Image
-                  src={child.photo_url}
-                  alt={`Foto ${child.full_name}`}
-                  fill
-                  className="object-cover"
-                  sizes="80px"
-                />
+                <Image src={child.photo_url} alt={`Foto ${child.full_name}`} fill className="object-cover" sizes="80px" />
               ) : (
-                child.nickname?.charAt(0) || child.full_name.charAt(0)
+                <div className="flex h-full w-full items-center justify-center text-3xl font-bold">
+                  {child.full_name.charAt(0)}
+                </div>
               )}
             </div>
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <h2 className="text-xl font-bold">{child.full_name}</h2>
-              <p className="text-sky-100 text-sm">
-                {child.nickname && `${child.nickname} • `}
-                {child.grade_level}
+              <p className="text-sm text-sky-100">
+                {child.nickname || child.full_name} | {child.grade_level}
               </p>
-              <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-sky-100">
-                <span className="flex items-center gap-1">
-                  <BookOpen className="w-4 h-4" />
-                  {stats.totalEntries} sesi belajar
-                </span>
-                <span className="flex items-center gap-1">
-                  <FileText className="w-4 h-4" />
-                  {reports.length} laporan
-                </span>
-                <span className="flex items-center gap-1">
-                  <Smile className="w-4 h-4" />
-                  {stats.happyCount} kali semangat
-                </span>
+              <div className="mt-2 flex flex-wrap gap-4 text-sm text-sky-50">
+                <span className="inline-flex items-center gap-1"><BookOpen className="h-4 w-4" />{stats.totalEntries} sesi belajar</span>
+                <span className="inline-flex items-center gap-1"><FileText className="h-4 w-4" />{reports.length} laporan</span>
+                <span className="inline-flex items-center gap-1"><Smile className="h-4 w-4" />{stats.happyCount} mood positif</span>
               </div>
             </div>
-            {/* Average score badge */}
-            <div className="flex flex-col items-center bg-white/20 rounded-2xl px-5 py-3 border border-white/30">
-              <div className="flex gap-0.5 mb-1">
-                {Array.from({ length: 5 }).map((_, i) => (
+            <div className="rounded-2xl border border-white/30 bg-white/20 px-5 py-3 text-center">
+              <div className="mb-1 flex gap-0.5">
+                {Array.from({ length: 5 }).map((_, index) => (
                   <Star
-                    key={i}
-                    className={`w-4 h-4 ${
-                      i < Math.round(stats.avgStars)
-                        ? "fill-amber-300 text-amber-300"
-                        : "text-white/30"
-                    }`}
+                    key={index}
+                    className={`h-4 w-4 ${index < Math.round(stats.avgStars) ? "fill-amber-300 text-amber-300" : "text-white/30"}`}
                   />
                 ))}
               </div>
@@ -280,451 +269,288 @@ export default function ParentDashboard() {
         </motion.div>
       )}
 
-      {/* ── Tabs ───────────────────────────────────────────────── */}
-      <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
-        {(
-          [
-            { key: "journal", label: "📓 Jurnal Harian", icon: Calendar },
-            { key: "reports", label: "📊 Laporan Bulanan", icon: TrendingUp },
-            { key: "progress", label: "🏆 Progress", icon: Trophy },
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-              activeTab === tab.key
-                ? "bg-white dark:bg-slate-900 text-slate-800 dark:text-white shadow-sm"
-                : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 md:grid-cols-4">
+        {[
+          { key: "overview" as const, label: "Dashboard", icon: BarChart3 },
+          { key: "journal" as const, label: "Jurnal Anak", icon: Calendar },
+          { key: "reports" as const, label: "Laporan", icon: FileText },
+          { key: "progress" as const, label: "Progress", icon: Trophy },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition sm:text-sm ${
+                activeTab === tab.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* ── Tab: Journal ────────────────────────────────────────── */}
+      {activeTab === "overview" && child && (
+        <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 flex items-center gap-2 font-semibold text-slate-900">
+              <BarChart3 className="h-5 w-5 text-sky-500" />
+              Ringkasan Anak
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Sesi belajar", value: stats.totalEntries, color: "bg-sky-50 text-sky-700" },
+                { label: "Report publish", value: reports.length, color: "bg-emerald-50 text-emerald-700" },
+                { label: "Mood positif", value: stats.happyCount, color: "bg-amber-50 text-amber-700" },
+                { label: "Avg score", value: `${stats.avgStars.toFixed(1)}/5`, color: "bg-indigo-50 text-indigo-700" },
+              ].map((item) => (
+                <div key={item.label} className={`rounded-xl p-4 ${item.color}`}>
+                  <p className="text-2xl font-bold">{item.value}</p>
+                  <p className="mt-1 text-xs font-semibold">{item.label}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 rounded-xl bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Next parent action</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                Review jurnal terbaru, ulangi satu aktivitas pendek di rumah, lalu beri apresiasi spesifik pada proses belajar anak.
+              </p>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 flex items-center gap-2 font-semibold text-slate-900">
+              <BookOpen className="h-5 w-5 text-emerald-500" />
+              Latest Learning Story
+            </h2>
+            {entries[0] ? (
+              <div className="grid gap-4 sm:grid-cols-[150px_1fr]">
+                <div className="relative h-40 overflow-hidden rounded-xl bg-slate-100">
+                  {entries[0].photo_urls?.[0] ? (
+                    <Image src={entries[0].photo_urls[0]} alt="Foto aktivitas belajar" fill className="object-cover" sizes="150px" />
+                  ) : child.photo_url ? (
+                    <Image src={child.photo_url} alt={`Foto ${child.full_name}`} fill className="object-cover" sizes="150px" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-sky-500">
+                      {child.full_name.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-400">{safeDate(entries[0].entry_date)}</p>
+                  <h3 className="mt-1 text-lg font-bold text-slate-900">{entries[0].session_title}</h3>
+                  <p className="mt-2 line-clamp-4 text-sm leading-relaxed text-slate-600">{entries[0].activities_description}</p>
+                  <button
+                    onClick={() => setActiveTab("journal")}
+                    className="mt-4 rounded-lg bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100"
+                  >
+                    Buka Jurnal
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Belum ada jurnal terbaru dari guru.</p>
+            )}
+          </section>
+        </div>
+      )}
+
       {activeTab === "journal" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-sky-500" />
+            <h2 className="flex items-center gap-2 font-semibold text-slate-900">
+              <Calendar className="h-5 w-5 text-sky-500" />
               Catatan Sesi Belajar
             </h2>
-            {entriesLoading && (
-              <div className="w-5 h-5 border-2 border-sky-300 border-t-sky-500 rounded-full animate-spin" />
-            )}
+            {entriesLoading && <div className="h-5 w-5 animate-spin rounded-full border-2 border-sky-300 border-t-sky-500" />}
           </div>
 
-          {entriesLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className="h-20 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 animate-pulse"
-                />
-              ))}
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 text-center text-slate-400">
-              <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          {entries.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-400">
+              <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-30" />
               <p>Belum ada catatan sesi belajar</p>
-              <p className="text-xs mt-1">Catatan akan muncul setelah guru mengisi entri harian</p>
             </div>
           ) : (
-            entries.map((entry, i) => {
-              const isExpanded = expandedEntry === entry.id;
+            entries.map((entry, index) => {
+              const expanded = expandedEntry === entry.id;
               return (
-                <motion.div
+                <motion.section
                   key={entry.id}
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(i * 0.04, 0.3) }}
-                  className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm"
+                  transition={{ delay: Math.min(index * 0.03, 0.25) }}
+                  className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
                 >
-                  {/* Entry Header */}
                   <button
-                    onClick={() =>
-                      setExpandedEntry(isExpanded ? null : entry.id)
-                    }
-                    className="w-full p-4 sm:p-5 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                    onClick={() => setExpandedEntry(expanded ? null : entry.id)}
+                    className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-slate-50 sm:p-5"
                   >
-                    <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                      <div className="w-11 h-11 rounded-xl bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center shrink-0">
-                        <span className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                          #{entry.meeting_number}
-                        </span>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sm font-bold text-sky-600">
+                        #{entry.meeting_number}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-medium text-slate-800 dark:text-white text-sm truncate">
-                          {entry.session_title || "Sesi Belajar"}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {new Date(entry.entry_date).toLocaleDateString(
-                            "id-ID",
-                            {
-                              weekday: "long",
-                              day: "numeric",
-                              month: "long",
-                              year: "numeric",
-                            }
-                          )}
-                        </p>
+                        <p className="truncate text-sm font-semibold text-slate-900">{entry.session_title}</p>
+                        <p className="text-xs text-slate-400">{safeDate(entry.entry_date)}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                    <div className="flex shrink-0 items-center gap-3">
                       <MoodIcon mood={entry.mood} />
-                      <div className="hidden sm:flex items-center gap-0.5">
-                        {Array.from({ length: 5 }).map((_, ii) => (
-                          <Star
-                            key={ii}
-                            className={`w-3.5 h-3.5 ${
-                              ii < entry.overall_stars
-                                ? "fill-amber-400 text-amber-400"
-                                : "text-slate-200 dark:text-slate-700"
-                            }`}
-                          />
+                      <div className="hidden gap-0.5 sm:flex">
+                        {Array.from({ length: 5 }).map((_, star) => (
+                          <Star key={star} className={`h-3.5 w-3.5 ${star < entry.overall_stars ? "fill-amber-400 text-amber-400" : "text-slate-200"}`} />
                         ))}
                       </div>
-                      {isExpanded ? (
-                        <ChevronUp className="w-4 h-4 text-slate-400" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-400" />
-                      )}
+                      {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                     </div>
                   </button>
 
-                  {/* Expanded Content */}
                   <AnimatePresence>
-                    {isExpanded && (
+                    {expanded && (
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="border-t border-slate-100 dark:border-slate-800"
+                        className="border-t border-slate-100"
                       >
-                        <div className="p-4 sm:p-5 space-y-4">
-                          {/* Mood badge */}
-                          <MoodLabel mood={entry.mood} />
-
-                          {/* Topics */}
-                          {entry.topics_taught && (
-                            <div className="p-3 bg-sky-50 dark:bg-sky-900/20 rounded-xl border border-sky-100 dark:border-sky-800">
-                              <p className="text-xs font-semibold text-sky-600 dark:text-sky-400 mb-1 flex items-center gap-1">
-                                <Target className="w-3.5 h-3.5" /> Materi yang Dipelajari
-                              </p>
-                              <p className="text-sm text-slate-700 dark:text-slate-300">
-                                {entry.topics_taught}
-                              </p>
-                              {entry.topics_taught_en && (
-                                <p className="text-xs text-slate-400 mt-1 italic">
-                                  🇬🇧 {entry.topics_taught_en}
-                                </p>
-                              )}
+                        <div className="space-y-4 p-4 sm:p-5">
+                          {entry.photo_urls?.length > 0 && (
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                              {entry.photo_urls.slice(0, 4).map((url, photoIndex) => (
+                                <div key={url} className="relative aspect-square overflow-hidden rounded-xl bg-slate-100">
+                                  <Image src={url} alt={`Foto aktivitas ${photoIndex + 1}`} fill className="object-cover" sizes="160px" />
+                                </div>
+                              ))}
                             </div>
                           )}
 
-                          {/* Activities */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
-                              <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                                🇮🇩 Deskripsi Aktivitas
+                          <div className="grid gap-3 lg:grid-cols-2">
+                            <div className="rounded-xl bg-slate-50 p-4">
+                              <p className="mb-2 flex items-center gap-1 text-xs font-bold text-slate-500">
+                                <BookOpen className="h-3.5 w-3.5" /> Aktivitas
                               </p>
-                              <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                                {entry.activities_description}
-                              </p>
+                              <p className="text-sm leading-relaxed text-slate-700">{entry.activities_description}</p>
                             </div>
-                            {entry.activities_description_en && (
-                              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
-                                <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                                  🇬🇧 Activity Description
-                                </p>
-                                <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                                  {entry.activities_description_en}
-                                </p>
-                              </div>
-                            )}
+                            <div className="rounded-xl bg-sky-50 p-4">
+                              <p className="mb-2 flex items-center gap-1 text-xs font-bold text-sky-600">
+                                <Target className="h-3.5 w-3.5" /> Materi & next topic
+                              </p>
+                              <p className="text-sm leading-relaxed text-slate-700">{entry.topics_taught || "-"}</p>
+                              {entry.next_topics && <p className="mt-2 text-xs font-medium text-sky-700">Next: {entry.next_topics}</p>}
+                            </div>
                           </div>
 
-                          {/* Photos */}
-                          {entry.photo_urls && entry.photo_urls.length > 0 && (
-                            <div>
-                              <p className="text-xs font-semibold text-slate-500 mb-2">
-                                📸 Dokumentasi
-                              </p>
-                              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                                {entry.photo_urls.map((url, pi) => (
-                                  <div
-                                    key={pi}
-                                    className="aspect-square rounded-xl overflow-hidden relative"
-                                  >
-                                    <Image
-                                      src={url}
-                                      alt={`Foto ${pi + 1}`}
-                                      fill
-                                      className="object-cover"
-                                      sizes="120px"
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Scores */}
-                          {entry.scores &&
-                            Object.keys(entry.scores).length > 0 && (
-                              <div>
-                                <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                                  <Star className="w-3.5 h-3.5 text-amber-400" />
-                                  Penilaian Per Kategori
-                                </p>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                  {Object.entries(entry.scores).map(
-                                    ([key, val]) => {
-                                      const cat = SCORE_CATEGORIES.find(
-                                        (c) => c.key === key
-                                      );
-                                      if (!cat || !val) return null;
-                                      const score = val as number;
-                                      return (
-                                        <div
-                                          key={key}
-                                          className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg"
-                                        >
-                                          <div className="flex items-center gap-1.5 mb-2">
-                                            <span className="text-base">
-                                              {cat.icon}
-                                            </span>
-                                            <p className="text-xs text-slate-500 truncate">
-                                              {cat.label_id}
-                                            </p>
-                                          </div>
-                                          <div className="flex gap-0.5">
-                                            {Array.from({ length: 5 }).map(
-                                              (_, si) => (
-                                                <Star
-                                                  key={si}
-                                                  className={`w-3 h-3 ${
-                                                    si < score
-                                                      ? "fill-amber-400 text-amber-400"
-                                                      : "text-slate-200 dark:text-slate-700"
-                                                  }`}
-                                                />
-                                              )
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                          {/* Notes & Suggestions */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="grid gap-3 lg:grid-cols-2">
                             {entry.teacher_notes && (
-                              <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                                <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-2 flex items-center gap-1">
-                                  <MessageCircle className="w-3.5 h-3.5" /> Catatan Guru
+                              <div className="rounded-xl bg-emerald-50 p-4">
+                                <p className="mb-2 flex items-center gap-1 text-xs font-bold text-emerald-700">
+                                  <MessageCircle className="h-3.5 w-3.5" /> Catatan Guru
                                 </p>
-                                <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                                  {entry.teacher_notes}
-                                </p>
-                                {entry.teacher_notes_en && (
-                                  <p className="text-xs text-slate-400 mt-2 italic border-t border-emerald-100 dark:border-emerald-800 pt-2">
-                                    🇬🇧 {entry.teacher_notes_en}
-                                  </p>
-                                )}
+                                <p className="text-sm leading-relaxed text-slate-700">{entry.teacher_notes}</p>
                               </div>
                             )}
                             {entry.suggestions && (
-                              <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800">
-                                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-2 flex items-center gap-1">
-                                  <Sparkles className="w-3.5 h-3.5" /> Saran untuk Orang Tua
+                              <div className="rounded-xl bg-amber-50 p-4">
+                                <p className="mb-2 flex items-center gap-1 text-xs font-bold text-amber-700">
+                                  <Sparkles className="h-3.5 w-3.5" /> Saran Orang Tua
                                 </p>
-                                <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                                  {entry.suggestions}
-                                </p>
-                                {entry.suggestions_en && (
-                                  <p className="text-xs text-slate-400 mt-2 italic border-t border-amber-100 dark:border-amber-800 pt-2">
-                                    🇬🇧 {entry.suggestions_en}
-                                  </p>
-                                )}
+                                <p className="text-sm leading-relaxed text-slate-700">{entry.suggestions}</p>
                               </div>
                             )}
                           </div>
-
-                          {/* Next Topics */}
-                          {entry.next_topics && (
-                            <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800">
-                              <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1">
-                                🎯 Rencana Pertemuan Berikutnya
-                              </p>
-                              <p className="text-sm text-slate-700 dark:text-slate-300">
-                                {entry.next_topics}
-                              </p>
-                            </div>
-                          )}
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </motion.div>
+                </motion.section>
               );
             })
           )}
         </div>
       )}
 
-      {/* ── Tab: Reports ────────────────────────────────────────── */}
-      {activeTab === "reports" && (
+      {activeTab === "reports" && child && (
         <div className="space-y-4">
-          <h2 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-emerald-500" />
+          <h2 className="flex items-center gap-2 font-semibold text-slate-900">
+            <FileText className="h-5 w-5 text-emerald-500" />
             Laporan Perkembangan Bulanan
           </h2>
 
           {reports.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 text-center text-slate-400">
-              <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-400">
+              <FileText className="mx-auto mb-3 h-12 w-12 opacity-30" />
               <p>Belum ada laporan yang dipublish</p>
-              <p className="text-xs mt-1">Laporan akan tersedia setelah guru membuat dan mempublish laporan bulanan</p>
             </div>
           ) : (
             <div className="grid gap-4">
-              {reports.map((report, reportIndex) => {
+              {reports.map((report, index) => {
                 const avg =
-                  Object.values(report.consolidated_scores || {}).reduce(
-                    (a: number, b: unknown) => a + ((b as number) || 0),
-                    0
-                  ) /
-                  Math.max(
-                    Object.values(report.consolidated_scores || {}).length,
-                    1
-                  );
-                const isPdfReady = pdfReadyId === report.id;
-                const reportEntries = entries.filter((e) => {
-                  const d = new Date(e.entry_date);
-                  return (
-                    d.getMonth() + 1 === report.month &&
-                    d.getFullYear() === report.year
-                  );
+                  Object.values(report.consolidated_scores || {}).reduce((sum: number, value: unknown) => sum + ((value as number) || 0), 0) /
+                  Math.max(Object.values(report.consolidated_scores || {}).length, 1);
+                const reportEntries = entries.filter((entry) => {
+                  const date = new Date(entry.entry_date);
+                  return date.getMonth() + 1 === report.month && date.getFullYear() === report.year;
                 });
 
                 return (
-                  <motion.div
-                    key={report.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm"
-                  >
-                    {/* Report Header */}
-                    <div className="p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h3 className="font-bold text-slate-800 dark:text-white text-lg">
-                            {report.period_label}
-                          </h3>
-                          <div className="flex flex-wrap gap-3 mt-2 text-sm text-slate-500">
-                            <span className="flex items-center gap-1">
-                              <BookOpen className="w-4 h-4" />
-                              {report.total_meetings} pertemuan
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Trophy className="w-4 h-4 text-amber-500" />
-                              Kehadiran {report.attendance_rate || 100}%
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex gap-0.5">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <Star
-                                key={i}
-                                className={`w-4 h-4 ${
-                                  i < Math.round(avg)
-                                    ? "fill-amber-400 text-amber-400"
-                                    : "text-slate-200 dark:text-slate-700"
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          <p className="text-xs text-slate-400">
-                            Rata-rata {avg.toFixed(1)}/5
-                          </p>
-                        </div>
+                  <section key={report.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">{report.period_label}</h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {report.total_meetings} pertemuan | Kehadiran {report.attendance_rate || 100}%
+                        </p>
                       </div>
-
-                      {/* Summary */}
-                      {report.summary && (
-                        <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
-                          <p className="text-xs font-semibold text-slate-500 mb-1">📋 Ringkasan</p>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                            {report.summary}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Achievements */}
-                      {report.achievements && (
-                        <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl">
-                          <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1">
-                            🏆 Pencapaian Bulan Ini
-                          </p>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                            {report.achievements}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Goals next month */}
-                      {report.goals_next_month && (
-                        <div className="mt-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl">
-                          <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1">
-                            🎯 Target Bulan Berikutnya
-                          </p>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                            {report.goals_next_month}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Recommendations */}
-                      {report.recommendations && (
-                        <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-                          <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-1">
-                            💡 Rekomendasi untuk Orang Tua
-                          </p>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                            {report.recommendations}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* ✅ FIX: PDF button with separate state — no longer conflicts with entry expand */}
-                      <div className="mt-4">
-                        {isPdfReady ? (
-                          <PDFDownloadButton
-                            report={report}
-                            student={child!}
-                            entries={reportEntries}
-                            reportNumber={reports.length - reportIndex}
-                          />
-                        ) : (
-                          <button
-                            onClick={() => setPdfReadyId(report.id)}
-                            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-sky-500 to-teal-500 text-white text-sm font-semibold rounded-xl hover:from-sky-600 hover:to-teal-600 transition-all active:scale-95"
-                          >
-                            <Download className="w-4 h-4" />
-                            Download Laporan PDF
-                          </button>
-                        )}
+                      <div className="flex items-center gap-0.5">
+                        {Array.from({ length: 5 }).map((_, star) => (
+                          <Star key={star} className={`h-4 w-4 ${star < Math.round(avg) ? "fill-amber-400 text-amber-400" : "text-slate-200"}`} />
+                        ))}
                       </div>
                     </div>
-                  </motion.div>
+
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {report.summary && (
+                        <div className="rounded-xl bg-slate-50 p-4">
+                          <p className="mb-1 text-xs font-bold text-slate-500">Ringkasan</p>
+                          <p className="text-sm leading-relaxed text-slate-700">{report.summary}</p>
+                        </div>
+                      )}
+                      {report.achievements && (
+                        <div className="rounded-xl bg-emerald-50 p-4">
+                          <p className="mb-1 text-xs font-bold text-emerald-700">Pencapaian</p>
+                          <p className="text-sm leading-relaxed text-slate-700">{report.achievements}</p>
+                        </div>
+                      )}
+                      {report.goals_next_month && (
+                        <div className="rounded-xl bg-indigo-50 p-4">
+                          <p className="mb-1 text-xs font-bold text-indigo-700">Target Bulan Berikutnya</p>
+                          <p className="text-sm leading-relaxed text-slate-700">{report.goals_next_month}</p>
+                        </div>
+                      )}
+                      {report.recommendations && (
+                        <div className="rounded-xl bg-amber-50 p-4">
+                          <p className="mb-1 text-xs font-bold text-amber-700">Rekomendasi Parent</p>
+                          <p className="text-sm leading-relaxed text-slate-700">{report.recommendations}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4">
+                      {pdfReadyId === report.id ? (
+                        <PDFDownloadButton report={report} student={child} entries={reportEntries} reportNumber={reports.length - index} />
+                      ) : (
+                        <button
+                          onClick={() => setPdfReadyId(report.id)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white hover:from-sky-600 hover:to-teal-600"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download Laporan PDF
+                        </button>
+                      )}
+                    </div>
+                  </section>
                 );
               })}
             </div>
@@ -732,100 +558,69 @@ export default function ParentDashboard() {
         </div>
       )}
 
-      {/* ── Tab: Progress ───────────────────────────────────────── */}
       {activeTab === "progress" && (
         <div className="space-y-4">
-          <h2 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-amber-500" />
+          <h2 className="flex items-center gap-2 font-semibold text-slate-900">
+            <Trophy className="h-5 w-5 text-amber-500" />
             Grafik Perkembangan
           </h2>
 
           {entries.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 text-center text-slate-400">
-              <TrendingUp className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-400">
+              <TrendingUp className="mx-auto mb-3 h-12 w-12 opacity-30" />
               <p>Belum ada data progress</p>
             </div>
           ) : (
-            <>
-              {/* Score trend */}
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
-                <p className="font-medium text-slate-800 dark:text-white mb-4 text-sm">
-                  📈 Tren Nilai per Sesi (10 Terakhir)
-                </p>
-                <div className="flex items-end gap-1.5 h-24">
-                  {entries
-                    .slice(0, 10)
-                    .reverse()
-                    .map((e, i) => {
-                      const h = Math.max(
-                        ((e.overall_stars || 0) / 5) * 100,
-                        8
-                      );
-                      return (
-                        <div
-                          key={e.id}
-                          className="flex-1 flex flex-col items-center gap-1"
-                        >
-                          <div
-                            className="w-full rounded-t-lg bg-gradient-to-t from-sky-500 to-sky-400 transition-all"
-                            style={{ height: `${h}%` }}
-                            title={`Sesi #${e.meeting_number}: ${e.overall_stars}/5`}
-                          />
-                          <span className="text-[9px] text-slate-400">
-                            #{e.meeting_number}
-                          </span>
-                        </div>
-                      );
-                    })}
+            <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="mb-4 text-sm font-bold text-slate-900">Tren Nilai per Sesi (10 terakhir)</p>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <svg viewBox="0 0 190 100" className="h-56 w-full overflow-visible" role="img" aria-label="Grafik perkembangan nilai">
+                    {[1, 2, 3, 4, 5].map((tick) => (
+                      <g key={tick}>
+                        <line x1="18" x2="176" y1={82 - (tick / 5) * 60} y2={82 - (tick / 5) * 60} stroke="#e2e8f0" strokeWidth="0.8" />
+                        <text x="4" y={85 - (tick / 5) * 60} fontSize="5" fill="#64748b">
+                          {tick}
+                        </text>
+                      </g>
+                    ))}
+                    <polyline points={progressPath} fill="none" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                    {progressPoints.map((point) => (
+                      <g key={point.entry.id}>
+                        <circle cx={point.x} cy={point.y} r="4" fill="#14b8a6" stroke="white" strokeWidth="2" />
+                        <text x={point.x} y="95" textAnchor="middle" fontSize="5.5" fill="#64748b">
+                          #{point.entry.meeting_number}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
                 </div>
-              </div>
+              </section>
 
-              {/* Score by category */}
-              {entries.some(
-                (e) => e.scores && Object.keys(e.scores).length > 0
-              ) && (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
-                  <p className="font-medium text-slate-800 dark:text-white mb-4 text-sm">
-                    🎯 Rata-rata Per Kategori
-                  </p>
-                  <div className="space-y-3">
-                    {SCORE_CATEGORIES.map((cat) => {
-                      const vals = entries
-                        .map((e) => e.scores?.[cat.key] as number)
-                        .filter(Boolean);
-                      if (!vals.length) return null;
-                      const avg =
-                        vals.reduce((a, b) => a + b, 0) / vals.length;
-                      return (
-                        <div key={cat.key} className="flex items-center gap-3">
-                          <span className="text-lg w-7 text-center">
-                            {cat.icon}
-                          </span>
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between mb-1">
-                              <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                                {cat.label_id}
-                              </p>
-                              <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                                {avg.toFixed(1)}/5
-                              </p>
-                            </div>
-                            <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(avg / 5) * 100}%` }}
-                                transition={{ duration: 0.8, delay: 0.1 }}
-                                className="h-full bg-gradient-to-r from-sky-400 to-teal-400 rounded-full"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="mb-4 text-sm font-bold text-slate-900">Rata-rata Per Domain</p>
+                <div className="space-y-3">
+                  {categoryAverages.map(({ category, avg }) => (
+                    <div key={category.key}>
+                      <div className="mb-1 flex justify-between text-xs font-semibold text-slate-500">
+                        <span>{category.label_id}</span>
+                        <span>{avg.toFixed(1)}/5</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(avg / 5) * 100}%` }}
+                          className="h-full rounded-full bg-gradient-to-r from-sky-500 to-teal-500"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {categoryAverages.length === 0 && (
+                    <p className="text-sm text-slate-400">Belum ada penilaian per kategori dari guru.</p>
+                  )}
                 </div>
-              )}
-            </>
+              </section>
+            </div>
           )}
         </div>
       )}

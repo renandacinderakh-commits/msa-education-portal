@@ -24,8 +24,8 @@ const CW = PW - ML - MR;
 
 const COLORS = {
   ink: [15, 23, 42] as const,
-  slate: [71, 85, 105] as const,
-  muted: [148, 163, 184] as const,
+  slate: [51, 65, 85] as const,
+  muted: [100, 116, 139] as const,
   line: [226, 232, 240] as const,
   panel: [248, 250, 252] as const,
   paper: [255, 255, 255] as const,
@@ -36,8 +36,6 @@ const COLORS = {
   rose: [244, 63, 94] as const,
   indigo: [99, 102, 241] as const,
 };
-
-let activeLogoData: string | null = null;
 
 const FRAMEWORKS = [
   "IB PYP: inquiry + ATL skills",
@@ -244,29 +242,51 @@ const drawHeader = (
 
   setFill(pdf, COLORS.paper);
   pdf.roundedRect(ML - 1, 4.3, 37, 11.5, 2, 2, "F");
-  if (activeLogoData) {
-    try {
-      pdf.addImage(activeLogoData, imageFormat(activeLogoData), ML + 1, 6.2, 32, 7.5);
-    } catch {
-      setText(pdf, COLORS.sky);
-      pdf.setFont("Montserrat", "bold");
-      pdf.setFontSize(7);
-      pdf.text("MSA Education", ML + 2, 11.5);
-    }
-  } else {
-    setText(pdf, COLORS.sky);
-    pdf.setFont("Montserrat", "bold");
-    pdf.setFontSize(7);
-    pdf.text("MSA Education", ML + 2, 11.5);
-  }
+  drawMsaLogo(pdf, ML + 1.4, 5.7, 0.33);
 
   setText(pdf, COLORS.paper);
   pdf.setFont("Montserrat", "normal");
-  pdf.setFontSize(7.2);
+  pdf.setFontSize(7.8);
   pdf.text(cleanText(title), ML + 52, 12);
   pdf.text(`${code} | ${cleanText(student.full_name)} | ${cleanText(report.period_label)}`, PW - MR, 12, {
     align: "right",
   });
+};
+
+const drawMsaLogo = (pdf: JsPDFDoc, x: number, y: number, scale = 1) => {
+  const sx = (value: number) => x + value * scale;
+  const sy = (value: number) => y + value * scale;
+
+  pdf.setLineCap("round");
+  pdf.setLineJoin("round");
+  pdf.setLineWidth(2.2 * scale);
+  setStroke(pdf, COLORS.sky);
+  pdf.lines(
+    [
+      [7 * scale, -11 * scale],
+      [7 * scale, 11 * scale],
+      [9 * scale, 9 * scale],
+    ],
+    sx(0),
+    sy(18),
+    [1, 1],
+    "S"
+  );
+  setStroke(pdf, COLORS.teal);
+  pdf.lines([[8 * scale, 10 * scale]], sx(14), sy(7), [1, 1], "S");
+  setStroke(pdf, [250, 204, 21]);
+  pdf.lines([[6 * scale, -7 * scale]], sx(8), sy(18), [1, 1], "S");
+  setFill(pdf, [250, 204, 21]);
+  pdf.circle(sx(7), sy(5), 1.7 * scale, "F");
+
+  setText(pdf, [12, 74, 110]);
+  pdf.setFont("Montserrat", "bold");
+  pdf.setFontSize(21 * scale);
+  pdf.text("MSA", sx(28), sy(14));
+  setText(pdf, COLORS.teal);
+  pdf.setFont("Montserrat", "normal");
+  pdf.setFontSize(8.8 * scale);
+  pdf.text("E D U C A T I O N", sx(28), sy(25));
 };
 
 const drawFooter = (pdf: JsPDFDoc, code: string) => {
@@ -381,9 +401,9 @@ const drawCover = (
 
   setText(pdf, COLORS.ink);
   pdf.setFont("Montserrat", "bold");
-  pdf.setFontSize(19);
+  pdf.setFontSize(20);
   pdf.text("Comprehensive Learning Progress Report", ML + 10, 48);
-  pdf.setFontSize(9);
+  pdf.setFontSize(9.6);
   setText(pdf, COLORS.slate);
   pdf.setFont("Montserrat", "normal");
   pdf.text("Bilingual portfolio, 10-star rubric, daily evidence, and next-step learning plan.", ML + 10, 58);
@@ -404,7 +424,7 @@ const drawCover = (
   pdf.text(cleanText(student.full_name), ML + 60, 94);
   setText(pdf, COLORS.slate);
   pdf.setFont("Montserrat", "normal");
-  pdf.setFontSize(8.2);
+  pdf.setFontSize(8.8);
   pdf.text(`Nickname: ${cleanText(student.nickname || "-")}`, ML + 60, 103);
   pdf.text(`Level: ${cleanText(student.grade_level)}`, ML + 60, 110);
   pdf.text(`Date of birth: ${safeDate(student.date_of_birth)}`, ML + 60, 117);
@@ -418,7 +438,7 @@ const drawCover = (
   let y = 154;
   setText(pdf, COLORS.ink);
   pdf.setFont("Montserrat", "bold");
-  pdf.setFontSize(10.5);
+  pdf.setFontSize(11);
   pdf.text("Overall 10-Star Growth Rating", ML, y);
   drawTenStars(pdf, ML, y + 12, avg10, 2.4);
   setText(pdf, COLORS.ink);
@@ -434,7 +454,7 @@ const drawCover = (
   pdf.text("Assessment Scale", ML + 6, y + 9);
   setText(pdf, COLORS.slate);
   pdf.setFont("Montserrat", "normal");
-  pdf.setFontSize(7.2);
+  pdf.setFontSize(7.8);
   const scale = [
     "1-2 Emerging: needs consistent guidance",
     "3-4 Developing: building early control",
@@ -543,7 +563,7 @@ const drawDomainCard = (
 ) => {
   const details = DOMAIN_DETAILS[category.key];
   const score = domainScore(report, category.key);
-  const h = 43;
+  const h = 50;
 
   setFill(pdf, COLORS.paper);
   pdf.roundedRect(x, y, w, h, 4, 4, "F");
@@ -555,33 +575,33 @@ const drawDomainCard = (
 
   setText(pdf, COLORS.ink);
   pdf.setFont("Montserrat", "bold");
-  pdf.setFontSize(8);
+  pdf.setFontSize(8.8);
   pdf.text(cleanText(category.label_id), x + 5, y + 6.5);
   setText(pdf, COLORS.sky);
-  pdf.setFontSize(7);
+  pdf.setFontSize(7.8);
   pdf.text(`${score}/10`, x + w - 6, y + 6.5, { align: "right" });
   drawTenStars(pdf, x + 5, y + 15.5, score, 1.35);
 
   setText(pdf, COLORS.slate);
   pdf.setFont("Montserrat", "normal");
-  pdf.setFontSize(6.3);
-  pdf.text(split(pdf, details.focus, w - 10).slice(0, 1), x + 5, y + 23);
+  pdf.setFontSize(7);
+  pdf.text(split(pdf, details.focus, w - 10).slice(0, 2), x + 5, y + 23);
 
   const subskillText = details.subskills.join(" | ");
   setText(pdf, COLORS.ink);
   pdf.setFont("Montserrat", "bold");
-  pdf.setFontSize(5.9);
-  pdf.text(split(pdf, subskillText, w - 10).slice(0, 2), x + 5, y + 29);
+  pdf.setFontSize(6.4);
+  pdf.text(split(pdf, subskillText, w - 10).slice(0, 2), x + 5, y + 32);
 
   setText(pdf, COLORS.muted);
   pdf.setFont("Montserrat", "normal");
-  pdf.setFontSize(5.7);
-  pdf.text(split(pdf, `Evidence: ${details.evidence}`, w - 10).slice(0, 2), x + 5, y + 35.5);
+  pdf.setFontSize(6.1);
+  pdf.text(split(pdf, `Evidence: ${details.evidence}`, w - 10).slice(0, 2), x + 5, y + 40);
 };
 
 const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, code: string) => {
   const categories = SCORE_CATEGORIES.filter((category) => report.consolidated_scores?.[category.key] != null);
-  const chunks = [categories.slice(0, 5), categories.slice(5, 10)];
+  const chunks = [categories.slice(0, 4), categories.slice(4, 8), categories.slice(8, 10)].filter((chunk) => chunk.length);
 
   chunks.forEach((chunk, pageIndex) => {
     pdf.addPage();
@@ -600,7 +620,7 @@ const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyRep
 
     chunk.forEach((category) => {
       drawDomainCard(pdf, ML, y, CW, category, report);
-      y += 48;
+      y += 56;
     });
 
     setFill(pdf, [255, 251, 235]);
@@ -785,12 +805,10 @@ export default function PDFDownloadButton({ report, student, entries, reportNumb
       await registerMontserrat(pdf);
       const code = reportCode(student, report, reportNumber);
       const activityUrls = entries.flatMap((entry) => entry.photo_urls || []).slice(0, 12);
-      const [logoData, studentPhoto, ...activityPhotos] = await Promise.all([
-        imageToDataUrl("/images/logo-full.png"),
+      const [studentPhoto, ...activityPhotos] = await Promise.all([
         imageToDataUrl(student.photo_url),
         ...activityUrls.map((url) => imageToDataUrl(url)),
       ]);
-      activeLogoData = logoData;
 
       drawCover(pdf, student, report, code, studentPhoto);
       drawNarrative(pdf, student, report, code);
