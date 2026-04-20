@@ -17,8 +17,11 @@ Font.register({
   family: "Poppins",
   fonts: [
     { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-400-normal.woff2", fontWeight: 400 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-400-normal.woff2", fontWeight: 400, fontStyle: "italic" },
     { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-600-normal.woff2", fontWeight: 600 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-600-normal.woff2", fontWeight: 600, fontStyle: "italic" },
     { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-700-normal.woff2", fontWeight: 700 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-700-normal.woff2", fontWeight: 700, fontStyle: "italic" },
   ],
 });
 
