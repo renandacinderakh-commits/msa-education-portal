@@ -107,8 +107,8 @@ export default function PortalLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [profile, setProfile] = useState<Profile | null>(() => readCachedProfile());
-  const [loading, setLoading] = useState(() => !readCachedProfile());
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -177,6 +177,12 @@ export default function PortalLayout({
         if (mounted) setLoading(false);
       }
     };
+
+    const cachedProfile = readCachedProfile();
+    if (cachedProfile) {
+      setProfile(cachedProfile);
+      setLoading(false);
+    }
 
     getProfile();
 

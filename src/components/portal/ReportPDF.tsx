@@ -12,16 +12,16 @@ import {
 import type { MonthlyReport, Student, DailyEntry } from "@/lib/supabase/types";
 import { SCORE_CATEGORIES, DOMAIN_CONFIG, STAR_LABELS } from "@/lib/supabase/types";
 
-// Register fonts — use jsDelivr TTF (react-pdf compatible, no italic needed)
+// Register local Montserrat TTF files; react-pdf needs each requested style variant.
 Font.register({
-  family: "Poppins",
+  family: "Montserrat",
   fonts: [
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-400-normal.woff2", fontWeight: 400 },
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-400-normal.woff2", fontWeight: 400, fontStyle: "italic" },
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-600-normal.woff2", fontWeight: 600 },
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-600-normal.woff2", fontWeight: 600, fontStyle: "italic" },
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-700-normal.woff2", fontWeight: 700 },
-    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-700-normal.woff2", fontWeight: 700, fontStyle: "italic" },
+    { src: "/fonts/Montserrat-Regular.ttf", fontWeight: 400 },
+    { src: "/fonts/Montserrat-Regular.ttf", fontWeight: 400, fontStyle: "italic" },
+    { src: "/fonts/Montserrat-SemiBold.ttf", fontWeight: 600 },
+    { src: "/fonts/Montserrat-SemiBold.ttf", fontWeight: 600, fontStyle: "italic" },
+    { src: "/fonts/Montserrat-Bold.ttf", fontWeight: 700 },
+    { src: "/fonts/Montserrat-Bold.ttf", fontWeight: 700, fontStyle: "italic" },
   ],
 });
 
@@ -111,7 +111,7 @@ const moodLabel = (m: string) => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  page: { fontFamily: "Poppins", backgroundColor: C.white, padding: 0 },
+  page: { fontFamily: "Montserrat", backgroundColor: C.white, padding: 0 },
 
   // ── Cover
   coverPage: { backgroundColor: "#e0f2fe", flex: 1 },
