@@ -6,6 +6,29 @@ import {
   resolvePortalRole,
 } from "@/lib/portal-access";
 
+async function getPortalRole(
+  supabase: ReturnType<typeof createServerClient>,
+  user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }
+) {
+  const fastRole = resolvePortalRole({
+    email: user.email,
+    metadata: user.user_metadata,
+  });
+  if (fastRole) return fastRole;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return resolvePortalRole({
+    profileRole: profile?.role,
+    email: user.email,
+    metadata: user.user_metadata,
+  });
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -51,17 +74,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && request.nextUrl.pathname === "/portal") {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    const role = resolvePortalRole({
-      profileRole: profile?.role,
-      email: user.email,
-      metadata: user.user_metadata,
-    });
+    const role = await getPortalRole(supabase, user);
     const url = request.nextUrl.clone();
     url.pathname = role ? getDashboardPath(role) : "/portal/login";
     return NextResponse.redirect(url);
@@ -69,18 +82,8 @@ export async function updateSession(request: NextRequest) {
 
   // If logged in and trying to access login page, redirect to appropriate dashboard
   if (user && request.nextUrl.pathname === "/portal/login") {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-
     const url = request.nextUrl.clone();
-    const role = resolvePortalRole({
-      profileRole: profile?.role,
-      email: user.email,
-      metadata: user.user_metadata,
-    });
+    const role = await getPortalRole(supabase, user);
     url.pathname = role ? getDashboardPath(role) : "/portal/login";
     return NextResponse.redirect(url);
   }
@@ -89,17 +92,7 @@ export async function updateSession(request: NextRequest) {
     const expectedRole = getExpectedRoleFromPath(request.nextUrl.pathname);
 
     if (expectedRole) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const role = resolvePortalRole({
-        profileRole: profile?.role,
-        email: user.email,
-        metadata: user.user_metadata,
-      });
+      const role = await getPortalRole(supabase, user);
 
       if (role && role !== expectedRole) {
         const url = request.nextUrl.clone();

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { getDashboardPath, resolvePortalRole } from "@/lib/portal-access";
+import type { Profile } from "@/lib/supabase/types";
 import {
   GraduationCap,
   Eye,
@@ -15,6 +16,8 @@ import {
   Sparkles,
 } from "lucide-react";
 
+const PROFILE_CACHE_KEY = "msa.portal.profile";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +25,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,40 +47,60 @@ export default function LoginPage() {
       }
 
       if (data.user) {
-        // Get user role
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role, full_name, email")
-          .eq("id", data.user.id)
-          .maybeSingle();
-
-        const role = resolvePortalRole({
-          profileRole: profile?.role,
+        let profile: Pick<Profile, "role" | "full_name" | "email"> | null = null;
+        let role = resolvePortalRole({
           email: data.user.email,
           metadata: data.user.user_metadata,
         });
 
         if (!role) {
-          await supabase.auth.signOut();
+          const result = await supabase
+            .from("profiles")
+            .select("role, full_name, email")
+            .eq("id", data.user.id)
+            .maybeSingle();
+          profile = result.data;
+          role = resolvePortalRole({
+            profileRole: profile?.role,
+            email: data.user.email,
+            metadata: data.user.user_metadata,
+          });
+        }
+
+        if (!role) {
+          await supabase.auth.signOut({ scope: "local" });
           setError("Akun ini belum punya role portal. Hubungi admin MSA untuk mapping role.");
           return;
         }
 
-        if (!profile) {
-          await supabase.from("profiles").upsert({
+        const fullName =
+          profile?.full_name ||
+          data.user.user_metadata?.full_name ||
+          data.user.user_metadata?.name ||
+          data.user.email?.split("@")[0] ||
+          "User";
+
+        window.sessionStorage.setItem(
+          PROFILE_CACHE_KEY,
+          JSON.stringify({
             id: data.user.id,
             role,
-            full_name:
-              data.user.user_metadata?.full_name ||
-              data.user.user_metadata?.name ||
-              data.user.email?.split("@")[0] ||
-              "User",
-            email: data.user.email,
-          });
-        }
+            full_name: fullName,
+            email: data.user.email ?? "",
+            whatsapp: null,
+            avatar_url: null,
+            created_at: new Date().toISOString(),
+          } satisfies Profile)
+        );
 
-        router.push(getDashboardPath(role));
-        router.refresh();
+        void supabase.from("profiles").upsert({
+          id: data.user.id,
+          role,
+          full_name: fullName,
+          email: data.user.email ?? "",
+        });
+
+        router.replace(getDashboardPath(role));
       }
     } catch {
       setError("Terjadi kesalahan. Silakan coba lagi.");

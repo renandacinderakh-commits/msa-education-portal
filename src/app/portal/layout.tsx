@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -49,6 +49,49 @@ const PARENT_NAV: NavItem[] = [
 ];
 
 // ─── Sidebar skeleton shown while loading ──────────────────────────────────
+const PROFILE_CACHE_KEY = "msa.portal.profile";
+const LAST_ACTIVITY_KEY = "msa.portal.lastActivity";
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const ACTIVITY_EVENTS = ["click", "keydown", "mousemove", "scroll", "touchstart"] as const;
+
+const readCachedProfile = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(PROFILE_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Profile) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedProfile = (profile: Profile) => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+};
+
+const clearPortalCache = () => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(PROFILE_CACHE_KEY);
+  window.localStorage.removeItem(LAST_ACTIVITY_KEY);
+};
+
+const fallbackProfile = (
+  user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> },
+  role: Profile["role"]
+): Profile => ({
+  id: user.id,
+  role,
+  full_name:
+    (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name) ||
+    (typeof user.user_metadata?.name === "string" && user.user_metadata.name) ||
+    user.email?.split("@")[0] ||
+    "User",
+  email: user.email ?? "",
+  whatsapp: null,
+  avatar_url: null,
+  created_at: new Date().toISOString(),
+});
+
 function NavSkeleton() {
   return (
     <div className="flex-1 p-4 space-y-2 animate-pulse">
@@ -64,11 +107,13 @@ export default function PortalLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(() => readCachedProfile());
+  const [loading, setLoading] = useState(() => !readCachedProfile());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+  const logoutStartedRef = useRef(false);
+  const lastActivityWriteRef = useRef(0);
 
   // ✅ FIX: Memoize supabase client — prevents new instance every render
   const supabase = useMemo(() => createClient(), []);
@@ -79,19 +124,26 @@ export default function PortalLayout({
     const getProfile = async () => {
       try {
         const {
-          data: { user },
-        } = await supabase.auth.getUser();
+          data: { session },
+        } = await supabase.auth.getSession();
+        const user = session?.user;
 
         if (!user) {
-          if (mounted) setLoading(false);
+          clearPortalCache();
+          if (mounted) {
+            setProfile(null);
+            setLoading(false);
+          }
           return;
         }
+        logoutStartedRef.current = false;
 
-        const { data } = await supabase
+        const profileResult = await supabase
           .from("profiles")
           .select("*")
           .eq("id", user.id)
           .maybeSingle();
+        const data = profileResult.data as Profile | null;
 
         const role = resolvePortalRole({
           profileRole: data?.role,
@@ -100,8 +152,9 @@ export default function PortalLayout({
         });
 
         if (!role) {
-          await supabase.auth.signOut();
-          router.push("/portal/login");
+          clearPortalCache();
+          await supabase.auth.signOut({ scope: "local" });
+          router.replace("/portal/login");
           return;
         }
 
@@ -112,23 +165,12 @@ export default function PortalLayout({
         }
 
         if (mounted) {
-          setProfile(
+          const nextProfile =
             data
               ? ({ ...data, role } as Profile)
-              : ({
-                  id: user.id,
-                  role,
-                  full_name:
-                    user.user_metadata?.full_name ||
-                    user.user_metadata?.name ||
-                    user.email?.split("@")[0] ||
-                    "User",
-                  email: user.email ?? "",
-                  whatsapp: null,
-                  avatar_url: null,
-                  created_at: new Date().toISOString(),
-                } as Profile)
-          );
+              : fallbackProfile(user, role);
+          writeCachedProfile(nextProfile);
+          setProfile(nextProfile);
           setLoading(false);
         }
       } catch {
@@ -142,7 +184,8 @@ export default function PortalLayout({
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event === "SIGNED_OUT") {
-          router.push("/portal/login");
+          clearPortalCache();
+          router.replace("/portal/login");
         }
         if (event === "TOKEN_REFRESHED" && session && mounted) {
           // Session refreshed silently — no action needed
@@ -158,10 +201,55 @@ export default function PortalLayout({
 
   // ✅ FIX: useCallback prevents new function reference every render
   const handleLogout = useCallback(async () => {
-    await supabase.auth.signOut();
-    router.push("/portal/login");
-    router.refresh();
+    if (logoutStartedRef.current) return;
+    logoutStartedRef.current = true;
+    clearPortalCache();
+    setProfile(null);
+    router.replace("/portal/login");
+    await supabase.auth.signOut({ scope: "local" });
   }, [supabase, router]);
+
+  useEffect(() => {
+    if (pathname === "/portal/login" || typeof window === "undefined") return;
+
+    const markActivity = () => {
+      const now = Date.now();
+      if (now - lastActivityWriteRef.current < 1000) return;
+      lastActivityWriteRef.current = now;
+      window.localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+    };
+
+    const logoutForIdle = () => {
+      void handleLogout();
+    };
+
+    markActivity();
+    ACTIVITY_EVENTS.forEach((event) => {
+      window.addEventListener(event, markActivity, { passive: true });
+    });
+
+    const interval = window.setInterval(() => {
+      const lastActivity = Number(window.localStorage.getItem(LAST_ACTIVITY_KEY) || Date.now());
+      if (Date.now() - lastActivity >= IDLE_TIMEOUT_MS) {
+        logoutForIdle();
+      }
+    }, 30000);
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === LAST_ACTIVITY_KEY && event.newValue === null) {
+        logoutForIdle();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("storage", onStorage);
+      ACTIVITY_EVENTS.forEach((event) => {
+        window.removeEventListener(event, markActivity);
+      });
+    };
+  }, [handleLogout, pathname]);
 
   // ✅ FIX: Better active state — handles sub-routes like /portal/parent/journal
   const isActive = useCallback(
@@ -242,6 +330,7 @@ export default function PortalLayout({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch
                   className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
                     active
                       ? `bg-gradient-to-r ${roleColor} text-white shadow-md`
@@ -374,6 +463,7 @@ export default function PortalLayout({
                       <Link
                         key={item.href}
                         href={item.href}
+                        prefetch
                         onClick={() => setSidebarOpen(false)}
                         className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
                           active
