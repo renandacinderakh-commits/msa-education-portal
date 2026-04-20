@@ -10,15 +10,15 @@ import {
   Font,
 } from "@react-pdf/renderer";
 import type { MonthlyReport, Student, DailyEntry } from "@/lib/supabase/types";
-import { SCORE_CATEGORIES, STAR_LABELS } from "@/lib/supabase/types";
+import { SCORE_CATEGORIES, DOMAIN_CONFIG, STAR_LABELS } from "@/lib/supabase/types";
 
-// Register fonts
+// Register fonts — use jsDelivr TTF (react-pdf compatible, no italic needed)
 Font.register({
   family: "Poppins",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/poppins/v21/pxiEyp8kv8JHgFVrJJbecmNE.woff2", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/poppins/v21/pxiByp8kv8JHgFVrLGT9Z1xlFd2JQEk.woff2", fontWeight: 600 },
-    { src: "https://fonts.gstatic.com/s/poppins/v21/pxiByp8kv8JHgFVrLCz7Z1xlFd2JQEk.woff2", fontWeight: 700 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-400-normal.woff2", fontWeight: 400 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-600-normal.woff2", fontWeight: 600 },
+    { src: "https://cdn.jsdelivr.net/npm/@fontsource/poppins@5/files/poppins-latin-700-normal.woff2", fontWeight: 700 },
   ],
 });
 
@@ -49,52 +49,47 @@ const C = {
   bg: "#f8fafc",
 };
 
-// ─── Domain groupings (maps existing SCORE_CATEGORIES into 5 domains) ─────────
+// ─── Domain groupings — SYNCED with DOMAIN_CONFIG in types.ts ─────────────────
 const DOMAINS = [
   {
     key: "language",
     label_id: "Domain 1: Bahasa, Literasi & Komunikasi",
     label_en: "Language, Literacy & Communication",
-    icon: "📖",
-    color: C.sky,
-    ref: "EYFS: Literacy + Comm. & Language",
-    cats: ["literacy", "communication"],
+    icon: "📖", color: C.sky,
+    ref: "EYFS: Literacy + C&L",
+    cats: ["phonics_sounds","early_reading","writing_spelling","speaking_listening","vocabulary","english_efl"],
   },
   {
     key: "math",
-    label_id: "Domain 2: Matematika & Pemikiran Kognitif",
-    label_en: "Mathematics & Cognitive Thinking",
-    icon: "🔢",
-    color: C.green,
+    label_id: "Domain 2: Matematika & Pemikiran Logis",
+    label_en: "Mathematics & Logical Thinking",
+    icon: "🔢", color: C.green,
     ref: "EYFS: Mathematics",
-    cats: ["numeracy", "cognitive"],
+    cats: ["number_recognition","addition_subtraction","shapes_space","logical_reasoning","patterns_sequences","time_measurement"],
   },
   {
     key: "social",
-    label_id: "Domain 3: Sosial, Emosional & Kemandirian",
-    label_en: "Social, Emotional & Independence",
-    icon: "🤝",
-    color: C.pink,
+    label_id: "Domain 3: Sosial, Emosional & Karakter",
+    label_en: "Personal, Social & Emotional Development",
+    icon: "🤝", color: C.pink,
     ref: "EYFS: PSED + IB Learner Profile",
-    cats: ["social_emotional", "independence"],
+    cats: ["emotional_regulation","independence_initiative","self_confidence","empathy_cooperation","persistence_focus","behavior_ethics"],
   },
   {
     key: "physical",
     label_id: "Domain 4: Perkembangan Fisik & Motorik",
     label_en: "Physical & Motor Development",
-    icon: "🏃",
-    color: C.orange,
-    ref: "EYFS: Physical Development",
-    cats: ["fine_motor", "physical"],
+    icon: "🏃", color: C.orange,
+    ref: "EYFS: Physical Dev.",
+    cats: ["fine_motor","hand_eye_coordination","gross_motor"],
   },
   {
     key: "creative",
-    label_id: "Domain 5: Kreativitas, Seni & Eksplorasi",
-    label_en: "Creativity, Arts & Curiosity",
-    icon: "🎨",
-    color: C.purple,
-    ref: "EYFS: Expressive Arts + IB-PYP Inquiry",
-    cats: ["creativity", "curiosity"],
+    label_id: "Domain 5: Seni Kreatif, Kognitif & Eksplorasi",
+    label_en: "Creative Arts, Cognitive & World Exploration",
+    icon: "🎨", color: C.purple,
+    ref: "EYFS: EAD + UTW | IB-PYP Inquiry",
+    cats: ["creativity","curiosity_inquiry","world_understanding","problem_solving","music_rhythm","science_observation"],
   },
 ] as const;
 
