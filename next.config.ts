@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // ============================================================
+  // TURBOPACK: empty config to silence the webpack warning
+  // react-pdf is loaded client-only via dynamic imports (ssr:false)
+  // ============================================================
+  turbopack: {},
+
+
   images: {
     unoptimized: false,
   },
