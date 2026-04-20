@@ -23,17 +23,18 @@ const MR = 14;
 const CW = PW - ML - MR;
 
 const COLORS = {
-  ink: [10, 31, 46] as const,
-  slate: [43, 63, 82] as const,
-  muted: [84, 101, 116] as const,
-  line: [117, 190, 184] as const,
+  ink: [3, 7, 18] as const,
+  slate: [15, 23, 42] as const,
+  muted: [30, 41, 59] as const,
+  line: [68, 150, 141] as const,
   panel: [255, 252, 232] as const,
   paper: [255, 255, 255] as const,
-  cream: [255, 250, 224] as const,
-  butter: [255, 232, 133] as const,
-  peach: [255, 239, 212] as const,
-  forest: [17, 68, 62] as const,
-  navy: [13, 31, 55] as const,
+  cream: [255, 252, 226] as const,
+  butter: [255, 224, 104] as const,
+  peach: [255, 236, 205] as const,
+  mint: [225, 247, 239] as const,
+  forest: [5, 62, 52] as const,
+  navy: [9, 26, 43] as const,
   sky: [0, 157, 213] as const,
   teal: [0, 139, 128] as const,
   emerald: [0, 155, 111] as const,
@@ -222,6 +223,26 @@ const reportCode = (student: Student, report: MonthlyReport, reportNumber?: numb
   return `MSA/${String(report.month).padStart(2, "0")}-${sequence}/JKT/${studentCode}`;
 };
 
+const drawPlayfulDots = (pdf: JsPDFDoc, x: number, y: number, scale = 1) => {
+  const dots: Array<{ dx: number; dy: number; r: number; color: RGB }> = [
+    { dx: 0, dy: 0, r: 1.4, color: COLORS.rose },
+    { dx: 8, dy: -2.4, r: 1.1, color: COLORS.sky },
+    { dx: 15, dy: 1, r: 1.5, color: COLORS.emerald },
+    { dx: 23, dy: -1.8, r: 1, color: COLORS.indigo },
+    { dx: 31, dy: 1.6, r: 1.3, color: COLORS.amber },
+  ];
+
+  dots.forEach((dot) => {
+    setFill(pdf, dot.color);
+    pdf.circle(x + dot.dx * scale, y + dot.dy * scale, dot.r * scale, "F");
+  });
+
+  setStroke(pdf, COLORS.forest);
+  pdf.setLineWidth(0.45 * scale);
+  pdf.line(x + 38 * scale, y - 3 * scale, x + 44 * scale, y + 2 * scale);
+  pdf.line(x + 44 * scale, y - 3 * scale, x + 38 * scale, y + 2 * scale);
+};
+
 const drawHeader = (
   pdf: JsPDFDoc,
   title: string,
@@ -233,30 +254,34 @@ const drawHeader = (
   pdf.rect(0, 0, PW, PH, "F");
 
   setFill(pdf, COLORS.butter);
-  pdf.rect(0, 0, PW, 7.5, "F");
-  for (let x = 0; x <= PW + 7; x += 13) {
-    pdf.circle(x, 7.5, 6, "F");
+  pdf.rect(0, 0, PW, 24, "F");
+  for (let x = 0; x <= PW + 8; x += 12) {
+    pdf.circle(x, 24, 5.8, "F");
   }
 
-  setFill(pdf, COLORS.navy);
-  pdf.rect(0, 12, PW, 18, "F");
-  setFill(pdf, COLORS.sky);
-  pdf.rect(0, 12, 58, 18, "F");
-
   setFill(pdf, COLORS.paper);
-  pdf.roundedRect(ML - 1, 15.2, 37, 10.8, 2, 2, "F");
-  drawMsaLogo(pdf, ML + 1.4, 16.4, 0.31);
+  pdf.roundedRect(ML - 1, 8, 39, 12, 3, 3, "F");
+  setStroke(pdf, COLORS.line);
+  pdf.setLineWidth(0.35);
+  pdf.roundedRect(ML - 1, 8, 39, 12, 3, 3, "S");
+  drawMsaLogo(pdf, ML + 1.4, 9.2, 0.33);
 
-  setText(pdf, COLORS.paper);
+  setText(pdf, COLORS.forest);
   pdf.setFont("Montserrat", "bold");
-  pdf.setFontSize(7.9);
-  pdf.text(cleanText(title).toUpperCase(), ML + 50, 22.7);
+  pdf.setFontSize(8.3);
+  pdf.text(cleanText(title).toUpperCase(), ML + 50, 14);
   pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(6.8);
-  setText(pdf, COLORS.butter);
-  pdf.text(`${code} | ${cleanText(student.full_name)} | ${cleanText(report.period_label)}`, PW - MR, 22.7, {
+  setText(pdf, COLORS.ink);
+  pdf.text(`${code} | ${cleanText(student.full_name)} | ${cleanText(report.period_label)}`, PW - MR, 14, {
     align: "right",
   });
+
+  drawPlayfulDots(pdf, PW - MR - 51, 18, 0.8);
+
+  setStroke(pdf, COLORS.line);
+  pdf.setLineWidth(0.45);
+  pdf.line(ML, 31, PW - MR, 31);
 };
 
 const drawMsaLogo = (pdf: JsPDFDoc, x: number, y: number, scale = 1) => {
@@ -305,9 +330,9 @@ const drawFooter = (pdf: JsPDFDoc, code: string) => {
     pdf.setLineWidth(0.45);
     pdf.line(ML, PH - 17, PW - MR, PH - 17);
     setText(pdf, COLORS.forest);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.setFontSize(6.6);
-    pdf.text("MSA Education - Student Learning Portfolio Report - Print ready A4", ML, PH - 7);
+    pdf.text("MSA Education - Student Learning Portfolio Report", ML, PH - 7);
     pdf.setFont("Montserrat", "bold");
     pdf.text(`${code} - Page ${page}/${total}`, PW - MR, PH - 7, { align: "right" });
   }
@@ -410,6 +435,9 @@ const drawSectionTitle = (
   pdf.setFont("Montserrat", "bold");
   pdf.setFontSize(8.9);
   pdf.text(title.toUpperCase(), ML + 6, y + 6.6);
+  if (!subtitle) {
+    drawPlayfulDots(pdf, PW - MR - 45, y + 5.3, 0.55);
+  }
   if (subtitle) {
     setText(pdf, COLORS.ink);
     pdf.setFont("Montserrat", "semibold");
@@ -461,7 +489,7 @@ const drawCover = (
   pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(8.5);
   pdf.text("Comprehensive Learning Progress Report", ML + 10, 60);
-  pdf.setFont("Montserrat", "normal");
+  pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(7.3);
   pdf.text("Bilingual portfolio, 10-star rubric, daily evidence, and next-step learning plan.", ML + 10, 68);
   setText(pdf, COLORS.forest);
@@ -535,7 +563,7 @@ const drawCover = (
     setText(pdf, COLORS.ink);
     pdf.text(item[1], ML + 23, rowY);
     setText(pdf, COLORS.slate);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.text(item[2], ML + 61, rowY);
   });
 
@@ -598,7 +626,7 @@ const narrativeBlock = (
   pdf.setFontSize(7.6);
   pdf.text(left, ML + 8, y + 22);
   setText(pdf, COLORS.ink);
-  pdf.setFont("Montserrat", "normal");
+  pdf.setFont("Montserrat", "semibold");
   pdf.text(right, ML + 8 + colW + gap, y + 22);
   return y + height + 7;
 };
@@ -610,7 +638,7 @@ const drawNarrative = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, c
   let y = 39;
   y = drawSectionTitle(pdf, y, "Executive Summary / Ringkasan Utama");
   setText(pdf, COLORS.ink);
-  pdf.setFont("Montserrat", "normal");
+  pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(7.4);
   pdf.text(
     split(
@@ -688,7 +716,7 @@ const drawDomainCard = (
   pdf.setFontSize(6.3);
   pdf.text("EVIDENCE", x + 5, y + 40);
   setText(pdf, COLORS.slate);
-  pdf.setFont("Montserrat", "normal");
+  pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(6.1);
   pdf.text(split(pdf, details.evidence, w - 34).slice(0, 2), x + 32, y + 40);
 };
@@ -708,7 +736,7 @@ const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyRep
       pageIndex === 0 ? "10-Star Development Rubric" : "Detailed Development Rubric"
     );
     setText(pdf, COLORS.ink);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.setFontSize(7.2);
     pdf.text("Each domain combines teacher observation, activity evidence, learning behavior, and monthly consistency.", ML, y + 8);
     y += 21;
@@ -729,7 +757,7 @@ const drawAssessmentPages = (pdf: JsPDFDoc, student: Student, report: MonthlyRep
     pdf.setFontSize(7.5);
     pdf.text("INTERPRETATION NOTE", ML + 7, PH - 31);
     setText(pdf, COLORS.ink);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.setFontSize(6.5);
     pdf.text(
       split(
@@ -757,7 +785,7 @@ const drawEvidence = (
   let y = 39;
   y = drawSectionTitle(pdf, y, "Daily Evidence Portfolio", "Activity photos + teacher notes");
   setText(pdf, COLORS.ink);
-  pdf.setFont("Montserrat", "normal");
+  pdf.setFont("Montserrat", "semibold");
   pdf.setFontSize(7.2);
   pdf.text("Selected session evidence with activity photos, teacher observation, mood, and next learning cue.", ML, y);
   y += 12;
@@ -803,7 +831,7 @@ const drawEvidence = (
     pdf.text(`${safeDate(entry.entry_date)} | Mood: ${toTitle(entry.mood.replace("_", " "))} | Score: ${score10(entry.overall_stars || 0)}/10`, x, y + 16);
 
     setText(pdf, COLORS.slate);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.setFontSize(6.7);
     pdf.text(split(pdf, entry.activities_description || entry.teacher_notes, 123).slice(0, 3), x, y + 24);
     drawTenStars(pdf, x, y + 40, score10(entry.overall_stars || 0), 1.25);
@@ -856,7 +884,7 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
     pdf.setLineWidth(0.5);
     pdf.line(ML + 9, y + 10.3, ML + 58, y + 10.3);
     setText(pdf, COLORS.ink);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.setFontSize(7);
     pdf.text(split(pdf, plan.body, CW - 16), ML + 8, y + 16);
     y += 31;
@@ -892,7 +920,7 @@ const drawHomePlan = (pdf: JsPDFDoc, student: Student, report: MonthlyReport, co
     setStroke(pdf, COLORS.line);
     pdf.line(item.x + 16, y + 25, item.x + sigW - 16, y + 25);
     setText(pdf, COLORS.slate);
-    pdf.setFont("Montserrat", "normal");
+    pdf.setFont("Montserrat", "semibold");
     pdf.text(item.role, item.x + sigW / 2, y + 35, { align: "center" });
     pdf.setFont("Montserrat", "bold");
     pdf.text(cleanText(item.name), item.x + sigW / 2, y + 41, { align: "center" });
