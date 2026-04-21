@@ -13,15 +13,16 @@ import type { MonthlyReport, Student, DailyEntry } from "@/lib/supabase/types";
 import { SCORE_CATEGORIES, STAR_LABELS } from "@/lib/supabase/types";
 
 /* ═══════════════════════════════════════════════════════════════════════
-   FONT — Montserrat WOFF2 from /public/fonts/ (ZERO italic variants)
+   FONT — Montserrat TTF from Google Fonts CDN (no italic, no WOFF2)
+   URLs verified from fonts.googleapis.com/css?family=Montserrat:400,600,700,800
    ═══════════════════════════════════════════════════════════════════════ */
 Font.register({
   family: "Mont",
   fonts: [
-    { src: "/fonts/Montserrat-Regular.woff2",   fontWeight: 400 },
-    { src: "/fonts/Montserrat-SemiBold.woff2",  fontWeight: 600 },
-    { src: "/fonts/Montserrat-Bold.woff2",      fontWeight: 700 },
-    { src: "/fonts/Montserrat-ExtraBold.woff2", fontWeight: 800 },
+    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aX8.ttf", fontWeight: 400 },
+    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCu173w5aX8.ttf", fontWeight: 600 },
+    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCuM73w5aX8.ttf", fontWeight: 700 },
+    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCvr73w5aX8.ttf", fontWeight: 800 },
   ],
 });
 
